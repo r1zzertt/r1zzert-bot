@@ -11,16 +11,27 @@ import threading
 from flask import Flask, request
 import random
 
-# ==================== НАСТРОЙКИ ====================
+# ==================== НАСТРОЙКИ (ВСЁ ЧЕРЕЗ RENDER) ====================
 TOKEN = os.environ.get('BOT_TOKEN')
-CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME')
+CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
-KLING_API_KEY = os.environ.get('KLING_API_KEY', '')
-KLING_SECRET_KEY = os.environ.get('KLING_SECRET_KEY', '')
+KLING_API_KEY = os.environ.get('KLING_API_KEY')
+KLING_SECRET_KEY = os.environ.get('KLING_SECRET_KEY')
 PORT = int(os.environ.get('PORT', 10000))
 
-if not TOKEN or not CHANNEL_USERNAME or not GROQ_API_KEY:
-    print("❌ Ошибка: не все переменные окружения заданы!")
+# Проверка наличия ключей
+missing_keys = []
+if not TOKEN:
+    missing_keys.append("BOT_TOKEN")
+if not GROQ_API_KEY:
+    missing_keys.append("GROQ_API_KEY")
+if missing_keys:
+    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют ключи: {', '.join(missing_keys)}")
+    print("Добавь их в Environment Variables в Render!")
+
+# Kling ключи опциональны
+if not KLING_API_KEY or not KLING_SECRET_KEY:
+    print("⚠️ Kling AI ключи не найдены — видео-генерация будет недоступна")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -109,11 +120,15 @@ def check_subscription(user_id):
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ['member', 'administrator', 'creator']
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка проверки подписки: {e}")
         return False
 
-# ==================== РАБОТА С ИИ (ИСПРАВЛЕНО) ====================
+# ==================== РАБОТА С ИИ (GROQ) ====================
 def ask_groq(question, system_prompt):
+    if not GROQ_API_KEY:
+        return "❌ Groq API ключ не настроен"
+    
     try:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -135,21 +150,18 @@ def ask_groq(question, system_prompt):
             json=data,
             timeout=30
         )
-        
         if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content']
+            return response.json()['choices'][0]['message']['content']
         else:
             logger.error(f"Groq ошибка {response.status_code}: {response.text}")
-            return None
+            return f"😕 Ошибка Groq: {response.status_code}"
     except Exception as e:
         logger.error(f"Ошибка при запросе к Groq: {e}")
-        return None
+        return "😕 Ошибка связи с ИИ"
 
-# ==================== ГЕНЕРАЦИЯ ВИДЕО (ИСПРАВЛЕНО) ====================
+# ==================== ГЕНЕРАЦИЯ ВИДЕО (KLING) ====================
 def generate_video(prompt):
     if not KLING_API_KEY or not KLING_SECRET_KEY:
-        logger.warning("Ключи Kling AI не настроены")
         return None
     
     try:
@@ -167,11 +179,13 @@ def generate_video(prompt):
         data = {
             "prompt": prompt,
             "duration": 5,
-            "aspect_ratio": "9:16"
+            "aspect_ratio": "9:16",
+            "cfg_scale": 0.5,
+            "mode": "std"
         }
         
         response = requests.post(
-            "https://api.kling.ai/v1/videos/generations",
+            "https://api.klingai.com/v1/videos/generations",  # Обновлённый домен
             headers=headers,
             json=data,
             timeout=30
@@ -198,7 +212,7 @@ def check_video_task(task_id):
     for attempt in range(20):
         try:
             response = requests.get(
-                f"https://api.kling.ai/v1/videos/generations/{task_id}",
+                f"https://api.klingai.com/v1/videos/generations/{task_id}",
                 headers=headers,
                 timeout=30
             )
@@ -207,25 +221,20 @@ def check_video_task(task_id):
                 result = response.json()
                 if result.get('code') == 0:
                     status = result['data']['status']
-                    
                     if status == 'succeed':
                         return result['data']['videos'][0]['url']
                     elif status == 'failed':
-                        logger.error(f"Kling генерация провалилась")
                         return None
-                    else:
-                        time.sleep(5)
-                else:
-                    return None
-            else:
-                time.sleep(5)
+            time.sleep(5)
         except:
             time.sleep(5)
-    
     return None
 
-# ==================== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ (ИСПРАВЛЕНО) ====================
+# ==================== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ====================
 def generate_image(prompt):
+    if not GROQ_API_KEY:
+        return "❌ Groq API ключ не настроен"
+    
     try:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -236,7 +245,8 @@ def generate_image(prompt):
             "model": "llama-3.2-11b-vision-preview",
             "messages": [
                 {"role": "user", "content": f"Опиши подробно это изображение: {prompt}"}
-            ]
+            ],
+            "max_tokens": 500
         }
         response = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -244,23 +254,20 @@ def generate_image(prompt):
             json=data,
             timeout=30
         )
-        
         if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content']
+            return response.json()['choices'][0]['message']['content']
         else:
-            logger.error(f"Groq image ошибка {response.status_code}: {response.text}")
             return None
     except Exception as e:
-        logger.error(f"Ошибка генерации изображения: {e}")
+        logger.error(f"Ошибка генерации: {e}")
         return None
 
 # ==================== РЕЖИМЫ ====================
 MODES = {
     "assistant": {"name": "🤵 Обычный помощник", "prompt": "Ты полезный ассистент. Отвечай кратко и по делу."},
-    "developer": {"name": "💻 Разработчик", "prompt": "Ты эксперт по программированию. Помогай с кодом."},
-    "writer": {"name": "✍️ Писатель", "prompt": "Ты профессиональный писатель. Помогай с текстами."},
-    "creative": {"name": "🎨 Креативщик", "prompt": "Ты креативный директор. Генерируй идеи."}
+    "developer": {"name": "💻 Разработчик", "prompt": "Ты эксперт по программированию. Помогай с кодом, объясняй термины."},
+    "writer": {"name": "✍️ Писатель", "prompt": "Ты профессиональный писатель. Помогай с текстами, пиши красиво."},
+    "creative": {"name": "🎨 Креативщик", "prompt": "Ты креативный директор. Генерируй идеи, предлагай нестандартные решения."}
 }
 
 # ==================== КЛАВИАТУРЫ ====================
@@ -271,8 +278,10 @@ def get_main_keyboard():
 
 def get_modes_keyboard():
     markup = InlineKeyboardMarkup(row_width=2)
+    buttons = []
     for mode_id, mode_info in MODES.items():
-        markup.add(InlineKeyboardButton(mode_info['name'], callback_data=f"mode_{mode_id}"))
+        buttons.append(InlineKeyboardButton(mode_info['name'], callback_data=f"mode_{mode_id}"))
+    markup.add(*buttons)
     return markup
 
 def get_video_presets():
@@ -280,9 +289,9 @@ def get_video_presets():
     markup.add(
         InlineKeyboardButton("🌅 Закат на море", callback_data="video_sunset"),
         InlineKeyboardButton("🏙️ Ночной город", callback_data="video_city"),
-        InlineKeyboardButton("🚀 Полёт в космос", callback_data="video_space"),
-        InlineKeyboardButton("🎮 Игровой момент", callback_data="video_game"),
-        InlineKeyboardButton("🌊 Подводный мир", callback_data="video_ocean"),
+        InlineKeyboardButton("🚀 Космос", callback_data="video_space"),
+        InlineKeyboardButton("🎮 Игровой клип", callback_data="video_game"),
+        InlineKeyboardButton("🌊 Океан", callback_data="video_ocean"),
         InlineKeyboardButton("✏️ Свой промпт", callback_data="video_custom")
     )
     return markup
@@ -313,8 +322,7 @@ def get_chat_welcome():
         "💬 **Давай поболтаем!** Спрашивай что хочешь — я отвечу на всё!",
         "💬 **Я слушаю тебя!** Расскажи, что у тебя нового или задай любой вопрос.",
         "💬 **Погнали общаться!** О чём поговорим сегодня?",
-        "💬 **Твой личный ИИ-друг онлайн!** Что тебя интересует?",
-        "💬 **Спрашивай что угодно** — от программирования до житейских советов!"
+        "💬 **Твой личный ИИ-друг онлайн!** Что тебя интересует?"
     ]
     return random.choice(responses)
 
@@ -342,24 +350,7 @@ def get_stats_message(stats, mode_name):
     
     msgs, imgs, vids, joined = stats
     joined_str = datetime.fromisoformat(joined).strftime('%d.%m.%Y')
-    
-    responses = [
-        f"📊 **Твоя активность:**\n\n"
-        f"💬 Сообщений: {msgs}\n"
-        f"🎨 Сгенерировано описаний: {imgs}\n"
-        f"🎬 Создано видео: {vids}\n"
-        f"📅 В боте с: {joined_str}\n"
-        f"🎭 Текущий режим: {mode_name}\n\n"
-        f"Продолжай в том же духе! 🔥",
-        
-        f"📊 **Статистика использования:**\n\n"
-        f"• Отправлено сообщений: {msgs}\n"
-        f"• Запрошено фото: {imgs}\n"
-        f"• Сгенерировано видео: {vids}\n"
-        f"• Дата регистрации: {joined_str}\n\n"
-        f"Режим: {mode_name}"
-    ]
-    return random.choice(responses)
+    return f"📊 **Твоя активность:**\n\n💬 Сообщений: {msgs}\n🎨 Фото: {imgs}\n🎬 Видео: {vids}\n📅 В боте с: {joined_str}\n🎭 Текущий режим: {mode_name}"
 
 def get_help_message():
     return f"""
@@ -419,7 +410,7 @@ def start_command(message):
             message.chat.id,
             f"👋 Привет, {user_name}!\n\n"
             f"🔒 **Доступ к боту — только для подписчиков канала** {CHANNEL_USERNAME}\n\n"
-            f"Подпишись и нажми кнопку ниже, чтобы открыть все возможности:",
+            f"Подпишись и нажми кнопку ниже:",
             reply_markup=markup
         )
         return
@@ -428,11 +419,7 @@ def start_command(message):
     bot.send_message(
         message.chat.id,
         f"👋 **С возвращением, {user_name}!**\n\n"
-        f"🤖 Я — твой личный MEGA AI помощник. Умею:\n"
-        f"• Общаться на любые темы\n"
-        f"• Генерировать видео по тексту\n"
-        f"• Создавать описания изображений\n"
-        f"• Менять стиль общения\n\n"
+        f"🤖 Я — твой личный MEGA AI помощник.\n"
         f"Текущий режим: {MODES['assistant']['name']}\n"
         f"Используй кнопки ниже 👇",
         reply_markup=get_main_keyboard()
@@ -475,10 +462,10 @@ def callback_handler(call):
     elif call.data.startswith("video_"):
         presets = {
             "sunset": "Закат над океаном, волны набегают на берег, небо оранжево-розовое, облака, 4K",
-            "city": "Ночной мегаполис, неоновые огни, идёт дождь, отражения в лужах, киберпанк эстетика",
+            "city": "Ночной мегаполис, неоновые огни, идёт дождь, отражения в лужах, киберпанк",
             "space": "Космический корабль пролетает мимо красивой туманности, звёзды, планеты, эпично",
             "game": "Игровой персонаж в фэнтези мире, магия, эпичная битва, динамичный экшен",
-            "ocean": "Подводный мир, коралловый риф, разноцветные рыбки, солнечные лучи проникают сквозь воду",
+            "ocean": "Подводный мир, коралловый риф, разноцветные рыбки, солнечные лучи",
             "custom": "custom"
         }
         
@@ -494,12 +481,10 @@ def callback_handler(call):
         else:
             bot.send_message(
                 call.message.chat.id,
-                f"✅ Выбран сценарий: *{preset_key}*\n\n🎬 Запускаю генерацию...",
-                parse_mode="Markdown"
+                f"✅ Выбран сценарий\n🎬 Запускаю генерацию..."
             )
             process_video_text(call.message, presets[preset_key])
 
-# ==================== ОБРАБОТКА ВИДЕО (ИСПРАВЛЕНО) ====================
 def process_video_text(message, prompt):
     user_id = message.from_user.id
     queue_id = add_to_queue(user_id, prompt)
@@ -507,7 +492,6 @@ def process_video_text(message, prompt):
     bot.send_message(
         message.chat.id,
         f"🎬 **Видео добавлено в очередь!**\n\n"
-        f"🆔 Номер задачи: {queue_id}\n"
         f"⏱️ Время ожидания: ~1-2 минуты\n\n"
         f"Я пришлю уведомление, когда видео будет готово!"
     )
@@ -522,33 +506,21 @@ def process_video_text(message, prompt):
                     bot.send_video(
                         user_id,
                         video_url,
-                        caption=f"🎬 **Видео готово!**\n\nПромпт: {prompt}",
+                        caption=f"🎬 **Видео готово!**",
                         parse_mode="Markdown"
                     )
-                    bot.send_message(
-                        user_id,
-                        "✅ **Готово!** Ты можешь скачать видео или поделиться им."
-                    )
                 except Exception as e:
-                    if "bots can't send messages to bots" in str(e):
-                        logger.info("Попытка отправить видео боту — игнорируем")
-                    else:
-                        try:
-                            bot.send_message(
-                                user_id,
-                                f"❌ Ошибка отправки видео.\nНо ты можешь скачать его по ссылке:\n{video_url}"
-                            )
-                        except:
-                            pass
+                    if "bots can't send messages to bots" not in str(e):
+                        bot.send_message(
+                            user_id,
+                            f"❌ Ошибка отправки видео.\nНо ты можешь скачать его по ссылке:\n{video_url}"
+                        )
             else:
-                try:
-                    bot.send_message(
-                        user_id,
-                        "❌ **Не удалось создать видео.**\n"
-                        "Попробуй изменить промпт или выбрать другой сценарий."
-                    )
-                except:
-                    pass
+                bot.send_message(
+                    user_id,
+                    "❌ **Не удалось создать видео.**\n"
+                    "Попробуй изменить промпт или выбрать другой сценарий."
+                )
         except Exception as e:
             logger.error(f"Ошибка в потоке генерации видео: {e}")
     
@@ -568,8 +540,7 @@ def handle_message(message):
         markup.add(InlineKeyboardButton("📢 ПОДПИСАТЬСЯ", url=f"https://t.me/{CHANNEL_USERNAME[1:]}"))
         bot.send_message(
             message.chat.id,
-            "❌ **Сначала подпишись на канал!**\n\n"
-            f"🔗 {CHANNEL_USERNAME}",
+            "❌ **Сначала подпишись на канал!**",
             reply_markup=markup
         )
         return
@@ -580,8 +551,7 @@ def handle_message(message):
     elif text == "🎭 Режимы":
         bot.send_message(
             message.chat.id,
-            "🎭 **Выбери режим работы:**\n\n"
-            "Каждый режим меняет мой стиль общения.",
+            "🎭 **Выбери режим работы:**",
             reply_markup=get_modes_keyboard()
         )
     
@@ -623,13 +593,7 @@ def handle_message(message):
         if answer:
             update_stats(user_id, 'message')
             response = f"{MODES[mode]['name']}\n\n{answer}"
-            
-            if len(response) > 4000:
-                parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
-                for part in parts:
-                    bot.send_message(message.chat.id, part)
-            else:
-                bot.send_message(message.chat.id, response)
+            bot.send_message(message.chat.id, response)
         else:
             error_responses = [
                 "😕 Что-то пошло не так. Попробуй переформулировать вопрос.",
@@ -649,7 +613,6 @@ def process_image(message):
     
     if result:
         update_stats(user_id, 'image')
-        
         responses = [
             f"🎨 **Вот что получилось:**\n\n{result}",
             f"🎨 **Описание твоего изображения:**\n\n{result}",
