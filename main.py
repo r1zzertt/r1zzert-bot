@@ -136,7 +136,7 @@ def ask_groq(question, system_prompt):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         data = {
-            "model": "llama3-70b-8192",
+            "model": "mixtral-8x7b-32768",  # Рабочая модель
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question}
@@ -185,7 +185,7 @@ def generate_video(prompt):
         }
         
         response = requests.post(
-            "https://api.klingai.com/v1/videos/generations",  # Обновлённый домен
+            "https://api.klingai.com/v1/videos/generations",
             headers=headers,
             json=data,
             timeout=30
@@ -242,7 +242,7 @@ def generate_image(prompt):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         data = {
-            "model": "llama-3.2-11b-vision-preview",
+            "model": "mixtral-8x7b-32768",  # Рабочая модель
             "messages": [
                 {"role": "user", "content": f"Опиши подробно это изображение: {prompt}"}
             ],
