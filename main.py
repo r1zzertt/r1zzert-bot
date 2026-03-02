@@ -8,6 +8,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import hashlib
 import threading
+from flask import Flask, request
 
 # ==================== НАСТРОЙКИ ====================
 TOKEN = os.environ.get('BOT_TOKEN')
@@ -15,6 +16,7 @@ CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 KLING_API_KEY = os.environ.get('KLING_API_KEY', '')
 KLING_SECRET_KEY = os.environ.get('KLING_SECRET_KEY', '')
+PORT = int(os.environ.get('PORT', 10000))
 
 if not TOKEN or not CHANNEL_USERNAME or not GROQ_API_KEY:
     print("❌ Ошибка: не все переменные окружения заданы!")
@@ -23,6 +25,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
 
 # ==================== БАЗА ДАННЫХ ====================
 def init_database():
@@ -283,6 +286,22 @@ def get_video_presets():
     )
     return markup
 
+# ==================== ВЕБХУК ====================
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return 'OK', 200
+
+@app.route('/')
+def home():
+    return "🤖 @r1zzert_bot MEGA AI is running!"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
 # ==================== КОМАНДЫ ====================
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -482,10 +501,14 @@ def process_image(message):
 
 # ==================== ЗАПУСК ====================
 if __name__ == '__main__':
-    logger.info("🚀 MEGA AI запущен!")
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=0, timeout=20)
-        except Exception as e:
-            logger.error(f"Ошибка: {e}")
-            time.sleep(3)
+    logger.info("🚀 MEGA AI запускается с вебхуками...")
+    
+    # Устанавливаем вебхук
+    webhook_url = f"https://r1zzert-bot.onrender.com/webhook"
+    bot.remove_webhook()
+    time.sleep(1)
+    bot.set_webhook(url=webhook_url)
+    logger.info(f"✅ Вебхук установлен на {webhook_url}")
+    
+    # Запускаем Flask
+    app.run(host='0.0.0.0', port=PORT)
