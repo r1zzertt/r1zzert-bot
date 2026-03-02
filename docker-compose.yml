@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - SETUP_PASSWORD=098123
+      - TELEGRAM_BOT_TOKEN=8752774430:AAE_60WfToogtLszt9xnAspAvPZIDep1C3k
+    volumes:
+      - openclaw_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  openclaw_data:
