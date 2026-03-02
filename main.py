@@ -112,75 +112,147 @@ def check_subscription(user_id):
     except:
         return False
 
-# ==================== РАБОТА С ИИ ====================
+# ==================== РАБОТА С ИИ (ИСПРАВЛЕНО) ====================
 def ask_groq(question, system_prompt):
     try:
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
         data = {
             "model": "llama3-70b-8192",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question}
             ],
-            "temperature": 0.7
+            "temperature": 0.7,
+            "max_tokens": 1024
         }
-        response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data, timeout=30)
-        return response.json()['choices'][0]['message']['content'] if response.status_code == 200 else None
-    except:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        else:
+            logger.error(f"Groq ошибка {response.status_code}: {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Ошибка при запросе к Groq: {e}")
         return None
 
-# ==================== ГЕНЕРАЦИЯ ВИДЕО ====================
+# ==================== ГЕНЕРАЦИЯ ВИДЕО (ИСПРАВЛЕНО) ====================
 def generate_video(prompt):
     if not KLING_API_KEY or not KLING_SECRET_KEY:
+        logger.warning("Ключи Kling AI не настроены")
         return None
+    
     try:
         timestamp = int(time.time())
-        sign = hashlib.md5(f"{KLING_API_KEY}{timestamp}{KLING_SECRET_KEY}".encode()).hexdigest()
+        sign_string = f"{KLING_API_KEY}{timestamp}{KLING_SECRET_KEY}"
+        sign = hashlib.md5(sign_string.encode()).hexdigest()
+        
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {KLING_API_KEY}",
             "X-Timestamp": str(timestamp),
             "X-Sign": sign
         }
+        
+        data = {
+            "prompt": prompt,
+            "duration": 5,
+            "aspect_ratio": "9:16"
+        }
+        
         response = requests.post(
             "https://api.kling.ai/v1/videos/generations",
             headers=headers,
-            json={"prompt": prompt, "duration": 5, "aspect_ratio": "9:16"},
+            json=data,
             timeout=30
         )
-        if response.status_code == 200 and response.json().get('code') == 0:
-            task_id = response.json()['data']['task_id']
-            return check_video_task(task_id)
-    except:
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('code') == 0 and 'data' in result:
+                task_id = result['data']['task_id']
+                return check_video_task(task_id)
+            else:
+                logger.error(f"Kling API ошибка: {result}")
+                return None
+        else:
+            logger.error(f"Kling HTTP ошибка: {response.status_code}")
+            return None
+    except Exception as e:
+        logger.error(f"Ошибка генерации видео: {e}")
         return None
 
 def check_video_task(task_id):
     headers = {"Authorization": f"Bearer {KLING_API_KEY}"}
-    for _ in range(20):
+    
+    for attempt in range(20):
         try:
-            response = requests.get(f"https://api.kling.ai/v1/videos/generations/{task_id}", headers=headers, timeout=30)
-            if response.status_code == 200 and response.json().get('code') == 0:
-                status = response.json()['data']['status']
-                if status == 'succeed':
-                    return response.json()['data']['videos'][0]['url']
-                elif status == 'failed':
+            response = requests.get(
+                f"https://api.kling.ai/v1/videos/generations/{task_id}",
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('code') == 0:
+                    status = result['data']['status']
+                    
+                    if status == 'succeed':
+                        return result['data']['videos'][0]['url']
+                    elif status == 'failed':
+                        logger.error(f"Kling генерация провалилась")
+                        return None
+                    else:
+                        time.sleep(5)
+                else:
                     return None
-            time.sleep(5)
+            else:
+                time.sleep(5)
         except:
             time.sleep(5)
+    
     return None
 
-# ==================== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ ====================
+# ==================== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ (ИСПРАВЛЕНО) ====================
 def generate_image(prompt):
     try:
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
         data = {
             "model": "llama-3.2-11b-vision-preview",
-            "messages": [{"role": "user", "content": f"Опиши подробно это изображение: {prompt}"}]
+            "messages": [
+                {"role": "user", "content": f"Опиши подробно это изображение: {prompt}"}
+            ]
         }
-        response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data, timeout=30)
-        return response.json()['choices'][0]['message']['content'] if response.status_code == 200 else None
-    except:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        else:
+            logger.error(f"Groq image ошибка {response.status_code}: {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"Ошибка генерации изображения: {e}")
         return None
 
 # ==================== РЕЖИМЫ ====================
@@ -218,8 +290,14 @@ def get_video_presets():
 # ==================== ВЕБХУК ====================
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    bot.process_new_updates([telebot.types.Update.de_json(request.get_data().decode('UTF-8'))])
-    return 'OK', 200
+    try:
+        json_str = request.get_data().decode('UTF-8')
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    except Exception as e:
+        logger.error(f"Ошибка вебхука: {e}")
+        return 'ERROR', 500
 
 @app.route('/')
 def home():
@@ -421,6 +499,7 @@ def callback_handler(call):
             )
             process_video_text(call.message, presets[preset_key])
 
+# ==================== ОБРАБОТКА ВИДЕО (ИСПРАВЛЕНО) ====================
 def process_video_text(message, prompt):
     user_id = message.from_user.id
     queue_id = add_to_queue(user_id, prompt)
@@ -434,32 +513,44 @@ def process_video_text(message, prompt):
     )
     
     def generate():
-        video_url = generate_video(prompt)
-        if video_url:
-            update_queue(queue_id, video_url)
-            update_stats(user_id, 'video')
-            try:
-                bot.send_video(
-                    user_id,
-                    video_url,
-                    caption=f"🎬 **Видео готово!**\n\nПромпт: {prompt}",
-                    parse_mode="Markdown"
-                )
-                bot.send_message(
-                    user_id,
-                    "✅ **Готово!** Ты можешь скачать видео или поделиться им."
-                )
-            except Exception as e:
-                bot.send_message(
-                    user_id,
-                    f"❌ Ошибка отправки видео.\nНо ты можешь скачать его по ссылке:\n{video_url}"
-                )
-        else:
-            bot.send_message(
-                user_id,
-                "❌ **Не удалось создать видео.**\n"
-                "Попробуй изменить промпт или выбрать другой сценарий."
-            )
+        try:
+            video_url = generate_video(prompt)
+            if video_url:
+                update_queue(queue_id, video_url)
+                update_stats(user_id, 'video')
+                try:
+                    bot.send_video(
+                        user_id,
+                        video_url,
+                        caption=f"🎬 **Видео готово!**\n\nПромпт: {prompt}",
+                        parse_mode="Markdown"
+                    )
+                    bot.send_message(
+                        user_id,
+                        "✅ **Готово!** Ты можешь скачать видео или поделиться им."
+                    )
+                except Exception as e:
+                    if "bots can't send messages to bots" in str(e):
+                        logger.info("Попытка отправить видео боту — игнорируем")
+                    else:
+                        try:
+                            bot.send_message(
+                                user_id,
+                                f"❌ Ошибка отправки видео.\nНо ты можешь скачать его по ссылке:\n{video_url}"
+                            )
+                        except:
+                            pass
+            else:
+                try:
+                    bot.send_message(
+                        user_id,
+                        "❌ **Не удалось создать видео.**\n"
+                        "Попробуй изменить промпт или выбрать другой сценарий."
+                    )
+                except:
+                    pass
+        except Exception as e:
+            logger.error(f"Ошибка в потоке генерации видео: {e}")
     
     threading.Thread(target=generate, daemon=True).start()
 
@@ -490,7 +581,7 @@ def handle_message(message):
         bot.send_message(
             message.chat.id,
             "🎭 **Выбери режим работы:**\n\n"
-            "Каждый режим меняет мой стиль общения и专业知识.",
+            "Каждый режим меняет мой стиль общения.",
             reply_markup=get_modes_keyboard()
         )
     
@@ -531,14 +622,14 @@ def handle_message(message):
         
         if answer:
             update_stats(user_id, 'message')
-            response = f"*{MODES[mode]['name']}*\n\n{answer}"
+            response = f"{MODES[mode]['name']}\n\n{answer}"
             
             if len(response) > 4000:
                 parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
                 for part in parts:
-                    bot.send_message(message.chat.id, part, parse_mode="Markdown")
+                    bot.send_message(message.chat.id, part)
             else:
-                bot.send_message(message.chat.id, response, parse_mode="Markdown")
+                bot.send_message(message.chat.id, response)
         else:
             error_responses = [
                 "😕 Что-то пошло не так. Попробуй переформулировать вопрос.",
