@@ -17,8 +17,8 @@ CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
 PORT = int(os.environ.get('PORT', 10000))
 
-# 👑 СПИСОК АДМИНОВ (добавь свои ID)
-ADMIN_IDS = [1783230843]  # Замени на свой ID! Узнать можно у @userinfobot
+# 👑 СПИСОК АДМИНОВ (замени на свой ID!)
+ADMIN_IDS = [7604761660]  # Узнай свой ID у @userinfobot
 
 if not TOKEN or not GROQ_API_KEY:
     print("❌ Ошибка: не все переменные окружения заданы!")
@@ -80,7 +80,8 @@ def init_database():
             challenge_id INTEGER,
             completed_at TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (user_id),
-            FOREIGN KEY (challenge_id) REFERENCES challenges (id)
+            FOREIGN KEY (challenge_id) REFERENCES challenges (id),
+            PRIMARY KEY (user_id, challenge_id)
         )
     ''')
     
@@ -96,8 +97,8 @@ def init_database():
     
     conn.commit()
     
-    # Добавляем ежедневные челленджи если их нет
-    cursor.execute('SELECT COUNT(*) FROM challenges')
+    # Проверяем, есть ли челленджи на сегодня
+    cursor.execute('SELECT COUNT(*) FROM challenges WHERE date = ?', (datetime.now().date(),))
     if cursor.fetchone()[0] == 0:
         challenges = [
             ("Напиши стих", "Сочини стихотворение на любую тему", 15),
@@ -108,7 +109,7 @@ def init_database():
         ]
         for title, desc, reward in challenges:
             cursor.execute('''
-                INSERT INTO challenges (date, title, description, reward)
+                INSERT OR IGNORE INTO challenges (date, title, description, reward)
                 VALUES (?, ?, ?, ?)
             ''', (datetime.now().date(), title, desc, reward))
     
@@ -212,7 +213,12 @@ def get_daily_bonus(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('SELECT last_daily FROM users WHERE user_id = ?', (user_id,))
-    last_daily = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    if not result:
+        conn.close()
+        return False
+    
+    last_daily = result[0]
     last = datetime.fromisoformat(last_daily)
     
     if datetime.now().date() > last.date():
@@ -254,7 +260,7 @@ def complete_challenge(user_id, challenge_id, reward):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO completed_challenges (user_id, challenge_id, completed_at)
+        INSERT OR IGNORE INTO completed_challenges (user_id, challenge_id, completed_at)
         VALUES (?, ?, ?)
     ''', (user_id, challenge_id, datetime.now()))
     cursor.execute('UPDATE users SET crystals = crystals + ? WHERE user_id = ?', (reward, user_id))
@@ -295,331 +301,9 @@ def get_total_users_count():
     conn.close()
     return count
 
-def get_user_info(user_id):
-    """Получить полную информацию о пользователе"""
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
-
-# ==================== ПРОВЕРКА ПРАВ ====================
 def is_admin(user_id):
     """Проверка, является ли пользователь админом"""
     return user_id in ADMIN_IDS
-
-def admin_only(func):
-    """Декоратор для админских команд"""
-    def wrapper(message, *args, **kwargs):
-        if not is_admin(message.from_user.id):
-            bot.reply_to(message, "⛔ Эта команда только для администраторов.")
-            return
-        return func(message, *args, **kwargs)
-    return wrapper
-
-# ==================== АДМИНСКИЕ КОМАНДЫ ====================
-@bot.message_handler(commands=['admin'])
-@admin_only
-def admin_panel(message):
-    """Главное меню админки"""
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-        InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
-        InlineKeyboardButton("💎 Начислить кристаллы", callback_data="admin_add_crystals"),
-        InlineKeyboardButton("🎁 Выдать бонус всем", callback_data="admin_bonus_all"),
-        InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast"),
-        InlineKeyboardButton("🔍 Найти пользователя", callback_data="admin_find_user"),
-        InlineKeyboardButton("📋 Логи транзакций", callback_data="admin_transactions")
-    )
-    bot.send_message(
-        message.chat.id,
-        "👑 **Панель администратора**\n\nВыбери действие:",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
-
-@bot.message_handler(commands=['stats'])
-@admin_only
-def admin_stats_command(message):
-    """Быстрая статистика"""
-    total_users = get_total_users_count()
-    bot.send_message(
-        message.chat.id,
-        f"📊 **Общая статистика**\n\n"
-        f"👥 Всего пользователей: {total_users}\n"
-        f"👑 Админов: {len(ADMIN_IDS)}",
-        parse_mode="Markdown"
-    )
-
-@bot.message_handler(commands=['add_crystals'])
-@admin_only
-def admin_add_crystals_command(message):
-    """Начать процесс начисления кристаллов"""
-    msg = bot.send_message(
-        message.chat.id,
-        "✏️ Введи ID пользователя и количество кристаллов через пробел\n"
-        "Пример: `123456789 50`",
-        parse_mode="Markdown"
-    )
-    bot.register_next_step_handler(msg, process_add_crystals)
-
-def process_add_crystals(message):
-    try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            bot.send_message(message.chat.id, "❌ Неверный формат. Используй: `user_id количество`")
-            return
-        
-        user_id = int(parts[0])
-        amount = int(parts[1])
-        
-        add_crystals(user_id, amount, f"Начислено админом {message.from_user.id}")
-        bot.send_message(
-            message.chat.id,
-            f"✅ Пользователю {user_id} начислено {amount}💎"
-        )
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
-
-@bot.message_handler(commands=['broadcast'])
-@admin_only
-def admin_broadcast_command(message):
-    """Начать рассылку"""
-    msg = bot.send_message(
-        message.chat.id,
-        "📢 **Режим рассылки**\n\n"
-        "Отправь сообщение, которое нужно разослать всем пользователям.\n"
-        "Можно использовать текст, фото, видео, кнопки.\n\n"
-        "Для отмены отправь /cancel",
-        parse_mode="Markdown"
-    )
-    bot.register_next_step_handler(msg, process_broadcast)
-
-def process_broadcast(message):
-    if message.text == "/cancel":
-        bot.send_message(message.chat.id, "❌ Рассылка отменена")
-        return
-    
-    # Сохраняем сообщение для рассылки
-    broadcast_msg = message
-    
-    # Получаем всех пользователей
-    users = get_all_users()
-    total = len(users)
-    
-    status_msg = bot.send_message(
-        message.chat.id,
-        f"📢 **Начинаю рассылку**\n\n"
-        f"Всего пользователей: {total}\n"
-        f"Прогресс: 0/{total} (0%)"
-    )
-    
-    successful = 0
-    failed = 0
-    blocked = 0
-    
-    for i, user_id in enumerate(users):
-        try:
-            # Копируем сообщение пользователю
-            if broadcast_msg.content_type == 'text':
-                bot.send_message(user_id, broadcast_msg.text)
-            elif broadcast_msg.content_type == 'photo':
-                bot.send_photo(
-                    user_id,
-                    broadcast_msg.photo[-1].file_id,
-                    caption=broadcast_msg.caption
-                )
-            elif broadcast_msg.content_type == 'video':
-                bot.send_video(
-                    user_id,
-                    broadcast_msg.video.file_id,
-                    caption=broadcast_msg.caption
-                )
-            elif broadcast_msg.content_type == 'voice':
-                bot.send_voice(user_id, broadcast_msg.voice.file_id)
-            else:
-                bot.copy_message(user_id, broadcast_msg.chat.id, broadcast_msg.message_id)
-            
-            successful += 1
-        except Exception as e:
-            failed += 1
-            if "bot was blocked by the user" in str(e):
-                blocked += 1
-        
-        # Обновляем прогресс каждые 10 сообщений
-        if (i + 1) % 10 == 0:
-            percent = (i + 1) * 100 // total
-            bot.edit_message_text(
-                f"📢 **Рассылка**\n\n"
-                f"Прогресс: {i + 1}/{total} ({percent}%)",
-                status_msg.chat.id,
-                status_msg.message_id
-            )
-    
-    # Финальный отчет
-    bot.edit_message_text(
-        f"✅ **Рассылка завершена!**\n\n"
-        f"📊 Статистика:\n"
-        f"• Всего: {total}\n"
-        f"• ✅ Успешно: {successful}\n"
-        f"• ❌ Ошибок: {failed}\n"
-        f"• 🚫 Заблокировали бота: {blocked}",
-        status_msg.chat.id,
-        status_msg.message_id
-    )
-
-# ==================== ОБРАБОТЧИКИ КНОПОК АДМИНКИ ====================
-@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
-def admin_callback_handler(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "⛔ Доступ запрещен", show_alert=True)
-        return
-    
-    if call.data == "admin_stats":
-        total_users = get_total_users_count()
-        bot.edit_message_text(
-            f"📊 **Общая статистика**\n\n"
-            f"👥 Всего пользователей: {total_users}\n"
-            f"👑 Админов: {len(ADMIN_IDS)}",
-            call.message.chat.id,
-            call.message.message_id
-        )
-    
-    elif call.data == "admin_users":
-        total_users = get_total_users_count()
-        bot.edit_message_text(
-            f"👥 **Пользователи**\n\n"
-            f"Всего: {total_users}\n\n"
-            f"Используй /find_user [id или юзернейм] для поиска",
-            call.message.chat.id,
-            call.message.message_id
-        )
-    
-    elif call.data == "admin_add_crystals":
-        bot.edit_message_text(
-            "✏️ Введи ID пользователя и количество кристаллов через пробел\n"
-            "Пример: `123456789 50`",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode="Markdown"
-        )
-        bot.register_next_step_handler(call.message, process_add_crystals)
-    
-    elif call.data == "admin_bonus_all":
-        users = get_all_users()
-        total = len(users)
-        
-        msg = bot.edit_message_text(
-            f"🎁 **Выдача бонуса всем**\n\n"
-            f"Всего пользователей: {total}\n"
-            f"Введи количество кристаллов:",
-            call.message.chat.id,
-            call.message.message_id
-        )
-        bot.register_next_step_handler(msg, process_bonus_all)
-    
-    elif call.data == "admin_broadcast":
-        msg = bot.edit_message_text(
-            "📢 **Режим рассылки**\n\n"
-            "Отправь сообщение для рассылки всем пользователям.\n"
-            "Для отмены отправь /cancel",
-            call.message.chat.id,
-            call.message.message_id
-        )
-        bot.register_next_step_handler(msg, process_broadcast)
-    
-    elif call.data == "admin_find_user":
-        msg = bot.edit_message_text(
-            "🔍 Введи ID пользователя или @username:",
-            call.message.chat.id,
-            call.message.message_id
-        )
-        bot.register_next_step_handler(msg, process_find_user)
-    
-    elif call.data == "admin_transactions":
-        # Показать последние 10 транзакций
-        conn = sqlite3.connect('bot_database.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM transactions 
-            ORDER BY created_at DESC LIMIT 10
-        ''')
-        transactions = cursor.fetchall()
-        conn.close()
-        
-        text = "📋 **Последние транзакции**\n\n"
-        for t in transactions:
-            text += f"• Пользователь {t[1]}: {t[2]}💎 ({t[3]})\n"
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
-
-def process_bonus_all(message):
-    try:
-        amount = int(message.text)
-        users = get_all_users()
-        total = len(users)
-        
-        status_msg = bot.send_message(
-            message.chat.id,
-            f"🎁 **Выдаю бонус {amount}💎 всем пользователям**\n\n"
-            f"Всего: {total}\n"
-            f"Прогресс: 0/{total}"
-        )
-        
-        for i, user_id in enumerate(users):
-            add_crystals(user_id, amount, f"Бонус всем от админа {message.from_user.id}")
-            
-            if (i + 1) % 10 == 0:
-                percent = (i + 1) * 100 // total
-                bot.edit_message_text(
-                    f"🎁 **Выдаю бонус**\n\n"
-                    f"Прогресс: {i + 1}/{total} ({percent}%)",
-                    status_msg.chat.id,
-                    status_msg.message_id
-                )
-        
-        bot.edit_message_text(
-            f"✅ **Бонус выдан!**\n\n"
-            f"{total} пользователей получили +{amount}💎",
-            status_msg.chat.id,
-            status_msg.message_id
-        )
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ Введи число!")
-
-def process_find_user(message):
-    query = message.text.strip()
-    
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    
-    if query.isdigit():
-        cursor.execute('SELECT * FROM users WHERE user_id = ?', (int(query),))
-    else:
-        cursor.execute('SELECT * FROM users WHERE username = ?', (query.replace('@', ''),))
-    
-    user = cursor.fetchone()
-    conn.close()
-    
-    if user:
-        text = f"🔍 **Пользователь найден**\n\n"
-        text += f"🆔 ID: {user[0]}\n"
-        text += f"🎭 Режим: {user[1]}\n"
-        text += f"💬 Сообщений: {user[2]}\n"
-        text += f"🎨 Фото: {user[3]}\n"
-        text += f"🎨 Мемов: {user[4]}\n"
-        text += f"🎤 Голосовых: {user[5]}\n"
-        text += f"💎 Кристаллов: {user[6]}\n"
-        text += f"📅 В боте с: {user[7]}\n"
-        text += f"🖱️ Кликов: {user[12]}\n"
-        text += f"🎲 Побед в рулетке: {user[13]}\n"
-        text += f"🏆 Челленджей: {user[14]}"
-        
-        bot.send_message(message.chat.id, text)
-    else:
-        bot.send_message(message.chat.id, "❌ Пользователь не найден")
 
 # ==================== ПРОВЕРКА ПОДПИСКИ ====================
 def check_subscription(user_id):
@@ -673,21 +357,22 @@ def generate_real_image(prompt):
 
 # ==================== ГЕНЕРАЦИЯ МЕМОВ ====================
 MEME_TEMPLATES = {
-    "краб": "https://imgflip.com/s/meme/Crab-Rave.jpg",
-    "дрейк": "https://imgflip.com/s/meme/Drake-Hotline-Bling.jpg",
-    "батман": "https://imgflip.com/s/meme/Batman-Slapping-Robin.jpg",
-    "ожог": "https://imgflip.com/s/meme/Burn-Kitty.jpg",
-    "дог": "https://imgflip.com/s/meme/Doge.jpg",
-    "вселенная": "https://imgflip.com/s/meme/Expanding-Brain.jpg",
-    "фрай": "https://imgflip.com/s/meme/Futurama-Fry.jpg",
-    "девушка": "https://imgflip.com/s/meme/Disaster-Girl.jpg",
-    "тронь": "https://imgflip.com/s/meme/Ill-just-wait-here.jpg",
-    "парашют": "https://imgflip.com/s/meme/Always-Has-Been.jpg"
+    "краб": "Crab-Rave",
+    "дрейк": "Drake-Hotline-Bling",
+    "батман": "Batman-Slapping-Robin",
+    "ожог": "Burn-Kitty",
+    "дог": "Doge",
+    "вселенная": "Expanding-Brain",
+    "фрай": "Futurama-Fry",
+    "девушка": "Disaster-Girl",
+    "тронь": "Ill-just-wait-here",
+    "парашют": "Always-Has-Been"
 }
 
 def create_meme(template_key, top_text, bottom_text):
     try:
-        url = f"https://api.memegen.link/images/{template_key}/{top_text}/{bottom_text}.png"
+        template = MEME_TEMPLATES.get(template_key, template_key)
+        url = f"https://api.memegen.link/images/{template}/{top_text}/{bottom_text}.png"
         return url
     except:
         return None
@@ -803,9 +488,9 @@ def get_stats_message(user_id):
 🎨 Мемов: {user[4]}
 🎤 Голосовых: {user[5]}
 💎 Кристаллов: {user[6]}
-🖱️ Кликов: {user[12]}
-🎲 Побед в рулетке: {user[13]}
-🏆 Челленджей: {user[14]}
+🖱️ Кликов: {user[10]}
+🎲 Побед в рулетке: {user[11]}
+🏆 Челленджей: {user[12]}
 
 📅 В боте с: {datetime.fromisoformat(user[7]).strftime('%d.%m.%Y')}
 """
@@ -871,6 +556,26 @@ def start_command(message):
         reply_markup=get_main_keyboard()
     )
 
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Эта команда только для администраторов.")
+        return
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+        InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
+        InlineKeyboardButton("💎 Начислить кристаллы", callback_data="admin_add_crystals"),
+        InlineKeyboardButton("🎁 Бонус всем", callback_data="admin_bonus_all"),
+        InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")
+    )
+    bot.send_message(
+        message.chat.id,
+        "👑 **Панель администратора**",
+        reply_markup=markup
+    )
+
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
@@ -906,7 +611,7 @@ def callback_handler(call):
         markup.add(InlineKeyboardButton("🎲 В рулетку", callback_data="game_roulette"))
         
         bot.edit_message_text(
-            f"🖱️ **Кликер**\n\nКликов: {get_user(user_id)[12]}\n💎 Кристаллов: {get_crystals(user_id)}",
+            f"🖱️ **Кликер**\n\nКликов: {get_user(user_id)[10]}\n💎 Кристаллов: {get_crystals(user_id)}",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=markup
@@ -953,8 +658,8 @@ def callback_handler(call):
         text = "🏆 **Топ игроков**\n\n"
         for i, (uid, clicks, wins, crystals, challenges) in enumerate(leaders, 1):
             try:
-                user = bot.get_chat_member(uid, uid).user
-                name = user.first_name or "Аноним"
+                chat = bot.get_chat(uid)
+                name = chat.first_name or "Аноним"
                 text += f"{i}. {name} — {crystals}💎, {wins}🎲, {challenges}🏆\n"
             except:
                 text += f"{i}. Аноним — {crystals}💎\n"
@@ -969,6 +674,91 @@ def callback_handler(call):
             call.message.message_id
         )
         bot.register_next_step_handler(call.message, lambda m: process_meme(m, template))
+    
+    # Админские callback'и
+    elif call.data.startswith("admin_") and is_admin(user_id):
+        if call.data == "admin_stats":
+            total_users = get_total_users_count()
+            bot.edit_message_text(
+                f"📊 **Общая статистика**\n\n👥 Всего пользователей: {total_users}",
+                call.message.chat.id,
+                call.message.message_id
+            )
+        
+        elif call.data == "admin_add_crystals":
+            bot.edit_message_text(
+                "✏️ Введи ID пользователя и количество кристаллов через пробел\nПример: `123456789 50`",
+                call.message.chat.id,
+                call.message.message_id
+            )
+            bot.register_next_step_handler(call.message, process_admin_add_crystals)
+        
+        elif call.data == "admin_bonus_all":
+            bot.edit_message_text(
+                "✏️ Введи количество кристаллов для всех пользователей:",
+                call.message.chat.id,
+                call.message.message_id
+            )
+            bot.register_next_step_handler(call.message, process_admin_bonus_all)
+        
+        elif call.data == "admin_broadcast":
+            bot.edit_message_text(
+                "📢 Отправь сообщение для рассылки всем пользователям:",
+                call.message.chat.id,
+                call.message.message_id
+            )
+            bot.register_next_step_handler(call.message, process_admin_broadcast)
+
+def process_admin_add_crystals(message):
+    try:
+        user_id, amount = map(int, message.text.split())
+        add_crystals(user_id, amount, f"Начислено админом {message.from_user.id}")
+        bot.send_message(message.chat.id, f"✅ Пользователю {user_id} начислено {amount}💎")
+    except:
+        bot.send_message(message.chat.id, "❌ Неверный формат. Используй: `ID количество`")
+
+def process_admin_bonus_all(message):
+    try:
+        amount = int(message.text)
+        users = get_all_users()
+        total = len(users)
+        
+        for user_id in users:
+            add_crystals(user_id, amount, f"Бонус всем от админа {message.from_user.id}")
+        
+        bot.send_message(message.chat.id, f"✅ {total} пользователей получили +{amount}💎")
+    except:
+        bot.send_message(message.chat.id, "❌ Введи число!")
+
+def process_admin_broadcast(message):
+    users = get_all_users()
+    total = len(users)
+    successful = 0
+    
+    status_msg = bot.send_message(
+        message.chat.id,
+        f"📢 Начинаю рассылку...\n0/{total}"
+    )
+    
+    for i, user_id in enumerate(users):
+        try:
+            bot.copy_message(user_id, message.chat.id, message.message_id)
+            successful += 1
+        except:
+            pass
+        
+        if (i + 1) % 10 == 0:
+            bot.edit_message_text(
+                f"📢 Рассылка...\n{i + 1}/{total}",
+                status_msg.chat.id,
+                status_msg.message_id
+            )
+    
+    bot.edit_message_text(
+        f"✅ Рассылка завершена!\nУспешно: {successful}/{total}",
+        status_msg.chat.id,
+        status_msg.message_id
+    )
 
 def process_meme(message, template):
     user_id = message.from_user.id
@@ -1019,7 +809,7 @@ def handle_message(message):
     elif text == "🎭 Режимы":
         bot.send_message(
             message.chat.id,
-            "🎭 **Выбери режим:**\n✅ отмечен текущий",
+            "🎭 **Выбери режим:**",
             reply_markup=get_modes_keyboard(user_id)
         )
     
@@ -1027,7 +817,7 @@ def handle_message(message):
         bot.send_message(message.chat.id, "🎮 **Выбери игру:**", reply_markup=get_games_keyboard())
     
     elif text == "🎨 Создать мем":
-        bot.send_message(message.chat.id, "🎨 **Выбери шаблон мема:**", reply_markup=get_meme_templates_keyboard())
+        bot.send_message(message.chat.id, "🎨 **Выбери шаблон:**", reply_markup=get_meme_templates_keyboard())
     
     elif text == "🎤 Голос":
         if spend_crystals(user_id, 5, "Голосовое сообщение"):
@@ -1071,8 +861,8 @@ def handle_message(message):
         text = "🏆 **Топ игроков**\n\n"
         for i, (uid, clicks, wins, crystals, challenges) in enumerate(leaders, 1):
             try:
-                user = bot.get_chat_member(uid, uid).user
-                name = user.first_name or "Аноним"
+                chat = bot.get_chat(uid)
+                name = chat.first_name or "Аноним"
                 text += f"{i}. {name} — {crystals}💎, {wins}🎲, {challenges}🏆\n"
             except:
                 text += f"{i}. Аноним — {crystals}💎\n"
@@ -1091,14 +881,8 @@ def handle_message(message):
         if answer:
             update_stats(user_id, 'message')
             bot.send_message(message.chat.id, answer)
-            
-            challenge = get_todays_challenge()
-            if challenge and not check_challenge_completed(user_id, challenge[0]):
-                if challenge[1] == "Поговори с психологом" and mode == "psychologist":
-                    complete_challenge(user_id, challenge[0], challenge[3])
-                    bot.send_message(message.chat.id, f"🏆 **Челлендж выполнен!** +{challenge[3]}💎")
         else:
-            bot.send_message(message.chat.id, random.choice(["😕 Ошибка", "😕 Попробуй ещё"]))
+            bot.send_message(message.chat.id, "😕 Ошибка")
 
 def process_image(message):
     user_id = message.from_user.id
@@ -1134,7 +918,7 @@ def process_voice(message):
 
 # ==================== ЗАПУСК ====================
 if __name__ == '__main__':
-    logger.info("🚀 Запуск MEGA AI с админкой...")
+    logger.info("🚀 Запуск с вебхуками...")
     bot.remove_webhook()
     time.sleep(1)
     bot.set_webhook(url=f"https://r1zzert-bot.onrender.com/webhook")
