@@ -216,7 +216,7 @@ def get_queue_position(queue_id):
     ''', (queue_id,))
     position = cursor.fetchone()[0] + 1
     
-    cursor.execute('SELECT COUNT(*) FROM video_queue WHERE status = 'pending'')
+    cursor.execute("SELECT COUNT(*) FROM video_queue WHERE status = 'pending'")
     total = cursor.fetchone()[0]
     
     conn.close()
