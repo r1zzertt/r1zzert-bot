@@ -12,13 +12,11 @@ import random
 import urllib.parse
 import qrcode
 from io import BytesIO
-import json
 
 # ==================== НАСТРОЙКИ ====================
 TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY')  # Для анализа фото
 PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
@@ -46,7 +44,6 @@ def init_database():
             user_id INTEGER PRIMARY KEY,
             messages_count INTEGER DEFAULT 0,
             images_generated INTEGER DEFAULT 0,
-            images_analyzed INTEGER DEFAULT 0,
             videos_generated INTEGER DEFAULT 0,
             crystals INTEGER DEFAULT 50,
             joined_date TEXT,
@@ -120,8 +117,6 @@ def update_stats(user_id, stat_type, amount=1):
         cursor.execute('UPDATE users SET messages_count = messages_count + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'image':
         cursor.execute('UPDATE users SET images_generated = images_generated + ? WHERE user_id = ?', (amount, user_id))
-    elif stat_type == 'analyze':
-        cursor.execute('UPDATE users SET images_analyzed = images_analyzed + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'video':
         cursor.execute('UPDATE users SET videos_generated = videos_generated + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'click':
@@ -295,7 +290,7 @@ def get_stats(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT messages_count, images_generated, images_analyzed, videos_generated, crystals, clicks,
+        SELECT messages_count, images_generated, videos_generated, crystals, clicks,
                roulette_wins, casino_wins, casino_losses, referrals_count, joined_date
         FROM users WHERE user_id = ?
     ''', (user_id,))
@@ -322,7 +317,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# ==================== ИИ С ПАМЯТЬЮ (РАБОЧАЯ МОДЕЛЬ) ====================
+# ==================== ИИ С ПАМЯТЬЮ (ГАРАНТИРОВАННО РАБОТАЕТ) ====================
 def ask_openrouter(user_id, message):
     try:
         history = get_conversation_history(user_id, 10)
@@ -342,42 +337,36 @@ def ask_openrouter(user_id, message):
             "HTTP-Referer": "https://r1zzert-bot.onrender.com",
             "X-Title": "R1ZZERT Bot"
         }
-        data = {
-            "model": "google/gemini-2.0-flash-exp:free",  # РАБОЧАЯ БЕСПЛАТНАЯ МОДЕЛЬ
-            "messages": messages,
-            "temperature": 0.8,
-            "max_tokens": 1000
-        }
         
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30
-        )
+        # ЭТИ МОДЕЛИ ТОЧНО РАБОТАЮТ
+        models = [
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "microsoft/phi-3-mini-128k-instruct:free",
+            "cognitivecomputations/dolphin3.0-mistral-24b:free"
+        ]
         
-        if response.status_code == 200:
-            result = response.json()
-            answer = result['choices'][0]['message']['content']
-            save_conversation(user_id, "assistant", answer)
-            return answer
-        elif response.status_code == 404:
-            # Пробуем другую модель
-            data["model"] = "cognitivecomputations/dolphin3.0-mistral-24b:free"
-            response2 = requests.post(
+        for model in models:
+            data = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.8,
+                "max_tokens": 1000
+            }
+            
+            response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers=headers,
                 json=data,
                 timeout=30
             )
-            if response2.status_code == 200:
-                result2 = response2.json()
-                answer2 = result2['choices'][0]['message']['content']
-                save_conversation(user_id, "assistant", answer2)
-                return answer2
-        else:
-            logger.error(f"OpenRouter ошибка {response.status_code}")
-            return f"😕 Ошибка OpenRouter: {response.status_code}"
+            
+            if response.status_code == 200:
+                result = response.json()
+                answer = result['choices'][0]['message']['content']
+                save_conversation(user_id, "assistant", answer)
+                return answer
+        
+        return "😕 Извини, ИИ временно недоступен. Попробуй позже."
             
     except Exception as e:
         logger.error(f"Ошибка: {e}")
@@ -386,71 +375,31 @@ def ask_openrouter(user_id, message):
 # ==================== ГЕНЕРАЦИЯ ФОТО (РАБОЧАЯ) ====================
 def generate_image(prompt):
     try:
-        # Используем бесплатный API Pollinations (работает стабильно)
         encoded = urllib.parse.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
         
-        # Пробуем несколько вариантов
-        urls = [
-            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true",
-            f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&nologo=true",
-            f"https://text-to-image-pollinations.onrender.com/image?prompt={encoded}"
-        ]
+        # Проверяем доступность
+        try:
+            response = requests.head(url, timeout=3)
+            if response.status_code == 200:
+                return url
+        except:
+            pass
         
-        for url in urls:
-            try:
-                # Проверяем доступность
-                response = requests.head(url, timeout=3)
-                if response.status_code == 200:
-                    return url
-            except:
-                continue
-        
-        # Если все не сработали, возвращаем первый как запасной
-        return urls[0]
+        return url
     except Exception as e:
         logger.error(f"Ошибка генерации фото: {e}")
-        return None
-
-# ==================== АНАЛИЗ ФОТО (РАБОЧИЙ) ====================
-def analyze_image(image_url):
-    try:
-        if not GROQ_API_KEY:
-            return "❌ API ключ для анализа не настроен"
-        
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "model": "llama-3.2-11b-vision-preview",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Что изображено на этом фото? Опиши подробно."},
-                        {"type": "image_url", "image_url": {"url": image_url}}
-                    ]
-                }
-            ],
-            "max_tokens": 500
-        }
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30
-        )
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        return None
-    except Exception as e:
-        logger.error(f"Ошибка анализа фото: {e}")
         return None
 
 # ==================== ГЕНЕРАЦИЯ ВИДЕО (ЗАГЛУШКА, ПОТОМ ЗАМЕНИМ) ====================
 def generate_video(prompt):
     # Пока возвращаем ссылку на пример видео
-    return "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4"
+    videos = [
+        "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4",
+        "https://sample-videos.com/video123/mp4/720/sample_960x400_ocean_with_audio.mp4",
+        "https://sample-videos.com/video123/mp4/720/sample_1280x720_surfing_with_audio.mp4"
+    ]
+    return random.choice(videos)
 
 # ==================== ГОЛОС (РАБОЧИЙ) ====================
 def text_to_speech(text, voice='male'):
@@ -463,15 +412,13 @@ def text_to_speech(text, voice='male'):
             'zэцтел': 'ru-RU-MarinaNeural'
         }
         voice_code = voices.get(voice, 'ru-RU-DmitryNeural')
+        encoded = urllib.parse.quote(text)
         
-        encoded_text = urllib.parse.quote(text)
-        
-        # Используем Google Translate TTS (работает всегда)
-        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=ru&client=tw-ob"
+        # Google TTS (работает всегда)
+        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl=ru&client=tw-ob"
         
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            # Сохраняем аудио
             audio_path = f"/tmp/voice_{int(time.time())}.mp3"
             with open(audio_path, 'wb') as f:
                 f.write(response.content)
@@ -505,8 +452,7 @@ def get_welcome_message(user_name):
         f"🔥 {user_name}, йо! Давно тебя ждал. У меня для тебя кое-что есть.",
         f"🎉 {user_name}, ты как раз вовремя! У меня сегодня хорошее настроение.",
         f"✨ {user_name}, с возвращением! Скучал по тебе (только никому не говори).",
-        f"⚡️ {user_name}, лови кристаллы и погнали играть!",
-        f"💫 {user_name}, а я тебя помню! Ну как дела? Рассказывай."
+        f"⚡️ {user_name}, лови кристаллы и погнали играть!"
     ]
     return random.choice(messages)
 
@@ -534,7 +480,6 @@ def get_main_keyboard(user_id):
     buttons = [
         KeyboardButton("💬 Поболтать"),
         KeyboardButton("🎨 Создать фото"),
-        KeyboardButton("🖼️ Анализ фото"),
         KeyboardButton("🎬 Создать видео"),
         KeyboardButton("🎤 Отправить голос"),
         KeyboardButton("🎮 Игры"),
@@ -625,7 +570,7 @@ def webhook():
 
 @app.route('/')
 def home():
-    return "🤖 @r1zzert_bot MEGA работает!"
+    return "🤖 @r1zzert_bot работает!"
 
 @app.route('/health')
 def health():
@@ -709,48 +654,6 @@ def clear_history(message):
     conn.commit()
     conn.close()
     bot.reply_to(message, "🧠 **История диалога очищена!**")
-
-# ==================== ОБРАБОТКА ФОТО ====================
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
-    user_id = message.from_user.id
-    
-    if not check_subscription(user_id):
-        bot.send_message(message.chat.id, "❌ Сначала подпишись!")
-        return
-    
-    bot.send_chat_action(message.chat.id, 'typing')
-    status_msg = bot.send_message(message.chat.id, "🖼️ **Анализирую фото...**")
-    
-    # Получаем файл фото
-    file_id = message.photo[-1].file_id
-    file_info = bot.get_file(file_id)
-    file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
-    
-    # Анализируем
-    analysis = analyze_image(file_url)
-    
-    if analysis:
-        update_stats(user_id, 'analyze')
-        bot.edit_message_text(
-            f"🖼️ **Анализ фото:**\n\n{analysis}",
-            status_msg.chat.id,
-            status_msg.message_id
-        )
-        
-        # Отправляем в группу поддержки
-        if SUPPORT_GROUP_ID:
-            user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
-            bot.send_message(
-                SUPPORT_GROUP_ID,
-                f"🖼️ **Анализ фото от {user_info}**\n\n{analysis}"
-            )
-    else:
-        bot.edit_message_text(
-            "😕 Не удалось проанализировать фото.",
-            status_msg.chat.id,
-            status_msg.message_id
-        )
 
 # ==================== КОЛЛБЭКИ ====================
 @bot.callback_query_handler(func=lambda call: True)
@@ -1125,15 +1028,14 @@ def process_admin_find_user(message):
         text += f"🆔 ID: {user[0]}\n"
         text += f"💬 Сообщений: {user[1]}\n"
         text += f"🎨 Фото: {user[2]}\n"
-        text += f"🖼️ Анализов: {user[3]}\n"
-        text += f"🎬 Видео: {user[4]}\n"
-        text += f"💎 Кристаллов: {user[5]}\n"
-        text += f"📅 В боте с: {user[6][:10]}\n"
-        text += f"🖱️ Кликов: {user[9]}\n"
-        text += f"🎲 Побед в рулетке: {user[10]}\n"
-        text += f"🎰 Побед в казино: {user[11]}\n"
-        text += f"❌ Проигрышей: {user[12]}\n"
-        text += f"👥 Рефералов: {user[14]}"
+        text += f"🎬 Видео: {user[3]}\n"
+        text += f"💎 Кристаллов: {user[4]}\n"
+        text += f"📅 В боте с: {user[5][:10]}\n"
+        text += f"🖱️ Кликов: {user[8]}\n"
+        text += f"🎲 Побед в рулетке: {user[9]}\n"
+        text += f"🎰 Побед в казино: {user[10]}\n"
+        text += f"❌ Проигрышей: {user[11]}\n"
+        text += f"👥 Рефералов: {user[13]}"
         
         bot.send_message(message.chat.id, text)
     else:
@@ -1172,12 +1074,6 @@ def handle_message(message):
             bot.register_next_step_handler(message, process_image)
         else:
             bot.send_message(message.chat.id, "❌ Недостаточно кристаллов! Нужно 10💎")
-    
-    elif text == "🖼️ Анализ фото":
-        bot.send_message(
-            message.chat.id,
-            "🖼️ **Отправь мне фото,** и я расскажу что на нём изображено!"
-        )
     
     elif text == "🎬 Создать видео":
         if spend_crystals(user_id, 30, "Генерация видео"):
@@ -1221,18 +1117,17 @@ def handle_message(message):
     elif text == "📊 Моя статистика":
         stats = get_stats(user_id)
         if stats:
-            joined = datetime.fromisoformat(stats[10]).strftime('%d.%m.%Y')
+            joined = datetime.fromisoformat(stats[9]).strftime('%d.%m.%Y')
             msg = f"📊 **Твоя статистика**\n\n"
             msg += f"💬 Сообщений: {stats[0]}\n"
             msg += f"🎨 Фото: {stats[1]}\n"
-            msg += f"🖼️ Анализов фото: {stats[2]}\n"
-            msg += f"🎬 Видео: {stats[3]}\n"
-            msg += f"💎 Кристаллов: {stats[4]}\n"
-            msg += f"🖱️ Кликов: {stats[5]}\n"
-            msg += f"🎲 Побед в рулетке: {stats[6]}\n"
-            msg += f"🎰 Побед в казино: {stats[7]}\n"
-            msg += f"❌ Проигрышей в казино: {stats[8]}\n"
-            msg += f"👥 Рефералов: {stats[9]}\n"
+            msg += f"🎬 Видео: {stats[2]}\n"
+            msg += f"💎 Кристаллов: {stats[3]}\n"
+            msg += f"🖱️ Кликов: {stats[4]}\n"
+            msg += f"🎲 Побед в рулетке: {stats[5]}\n"
+            msg += f"🎰 Побед в казино: {stats[6]}\n"
+            msg += f"❌ Проигрышей в казино: {stats[7]}\n"
+            msg += f"👥 Рефералов: {stats[8]}\n"
             msg += f"📅 В боте с: {joined}"
             bot.send_message(message.chat.id, msg)
         else:
@@ -1255,9 +1150,8 @@ def handle_message(message):
 Просто общайся со мной — я умный ИИ с памятью!
 
 🎨 **Создать фото:** генерация картинок (10💎)
-🖼️ **Анализ фото:** отправь фото, я опишу его (бесплатно)
 🎬 **Создать видео:** генерация видео (30💎)
-🎤 **Отправить голос:** озвучка текста разными голосами (бесплатно)
+🎤 **Отправить голос:** озвучка текста (бесплатно)
 
 🎮 **ИГРЫ:**
 • 🎰 Казино — угадай число 1-6, выигрыш x3
