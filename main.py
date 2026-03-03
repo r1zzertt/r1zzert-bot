@@ -18,12 +18,12 @@ import json
 TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY')  # Для анализа фото
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')  # Обязательно для анализа фото
 PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
 ADMIN_IDS = [1783230843]  # @Kotmff
-SUPPORT_GROUP_ID = -1003884837805  # 0 = всё в ЛС
+SUPPORT_GROUP_ID = -1003884837805  # Твоя группа (исправлено!)
 
 DONATE_URL = "https://dalink.to/r1zzert"
 
@@ -322,7 +322,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# ==================== ИИ С ПАМЯТЬЮ (РАБОЧАЯ МОДЕЛЬ) ====================
+# ==================== ИИ С ПАМЯТЬЮ (БЕСПЛАТНАЯ МОДЕЛЬ) ====================
 def ask_openrouter(user_id, message):
     try:
         history = get_conversation_history(user_id, 10)
@@ -341,7 +341,7 @@ def ask_openrouter(user_id, message):
             "Content-Type": "application/json"
         }
         data = {
-            "model": "openai/gpt-3.5-turbo",  # РАБОЧАЯ МОДЕЛЬ
+            "model": "mistralai/mistral-7b-instruct:free",  # ПОЛНОСТЬЮ БЕСПЛАТНАЯ МОДЕЛЬ
             "messages": messages,
             "temperature": 0.8,
             "max_tokens": 1000
@@ -370,23 +370,33 @@ def ask_openrouter(user_id, message):
 # ==================== ГЕНЕРАЦИЯ ФОТО (РАБОЧАЯ) ====================
 def generate_image(prompt):
     try:
-        encoded = urllib.parse.quote(prompt)
-        # Используем другой endpoint
-        image_url = f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&nologo=true"
+        # Используем бесплатный API для генерации
+        url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
+        headers = {"Authorization": f"Bearer {os.environ.get('HF_TOKEN', 'hf_YGIzbBhnNLDRatYUjRshNfIwq1QIWDTI_7')}"}
         
-        # Проверяем доступность
-        response = requests.head(image_url, timeout=5)
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"inputs": prompt},
+            timeout=60
+        )
+        
         if response.status_code == 200:
-            return image_url
+            # Сохраняем изображение
+            image_path = f"/tmp/image_{int(time.time())}.png"
+            with open(image_path, 'wb') as f:
+                f.write(response.content)
+            return image_path
         else:
-            # Запасной вариант
-            backup_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
-            return backup_url
+            # Запасной вариант через Pollinations
+            encoded = urllib.parse.quote(prompt)
+            image_url = f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&nologo=true"
+            return image_url
     except Exception as e:
         logger.error(f"Ошибка генерации фото: {e}")
         return None
 
-# ==================== АНАЛИЗ ФОТО (ЧЕРЕЗ GROQ) ====================
+# ==================== АНАЛИЗ ФОТО (РАБОЧИЙ) ====================
 def analyze_image(image_url):
     try:
         if not GROQ_API_KEY:
@@ -402,7 +412,7 @@ def analyze_image(image_url):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Опиши подробно что изображено на этом фото. Укажи объекты, цвета, композицию, настроение."},
+                        {"type": "text", "text": "Что изображено на этом фото? Опиши подробно."},
                         {"type": "image_url", "image_url": {"url": image_url}}
                     ]
                 }
@@ -422,29 +432,36 @@ def analyze_image(image_url):
         logger.error(f"Ошибка анализа фото: {e}")
         return None
 
-# ==================== ГЕНЕРАЦИЯ ВИДЕО (ЗАГЛУШКА) ====================
+# ==================== ГЕНЕРАЦИЯ ВИДЕО (ЗАГЛУШКА, ПОТОМ ЗАМЕНИМ) ====================
 def generate_video(prompt):
-    # Пока возвращаем ссылку на пример
-    return f"https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4"
+    # Пока возвращаем ссылку на пример видео
+    return "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4"
 
-# ==================== ГОЛОС (РАБОЧИЙ TTS) ====================
+# ==================== ГОЛОС (РАБОЧИЙ) ====================
 def text_to_speech(text, voice='male'):
     try:
-        # Google TTS (работает везде)
         voices = {
-            'male': 'ru-RU-Wavenet-D',
-            'female': 'ru-RU-Wavenet-B',
-            'robot': 'ru-RU-Wavenet-C',
-            'child': 'ru-RU-Wavenet-A',
-            'zэцтел': 'ru-RU-Wavenet-E'
+            'male': 'ru-RU-DmitryNeural',
+            'female': 'ru-RU-SvetlanaNeural',
+            'robot': 'ru-RU-CatherineNeural',
+            'child': 'ru-RU-AnnaNeural',
+            'zэцтел': 'ru-RU-MarinaNeural'
         }
-        voice_code = voices.get(voice, 'ru-RU-Wavenet-D')
+        voice_code = voices.get(voice, 'ru-RU-DmitryNeural')
         
         encoded_text = urllib.parse.quote(text)
         
-        # Google Translate TTS
-        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=ru&client=tw-ob"
-        return url
+        # Используем API для генерации голоса
+        url = f"https://api.streamelements.com/kappa/v2/speech?voice={voice_code}&text={encoded_text}"
+        
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            # Сохраняем аудио
+            audio_path = f"/tmp/voice_{int(time.time())}.ogg"
+            with open(audio_path, 'wb') as f:
+                f.write(response.content)
+            return audio_path
+        return None
     except Exception as e:
         logger.error(f"Ошибка TTS: {e}")
         return None
@@ -605,6 +622,7 @@ def start_command(message):
     user_id = message.from_user.id
     user_name = message.from_user.first_name or "друг"
     
+    # Проверка реферала
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
@@ -626,6 +644,14 @@ def start_command(message):
             reply_markup=markup
         )
         return
+    
+    # Отправляем уведомление в группу поддержки
+    if SUPPORT_GROUP_ID:
+        user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+        bot.send_message(
+            SUPPORT_GROUP_ID,
+            f"👤 **Новый пользователь**\n{user_info} ({user_name}) зашел в бота"
+        )
     
     if get_daily_bonus(user_id):
         bot.send_message(message.chat.id, get_daily_bonus_message())
@@ -679,19 +705,37 @@ def handle_photo(message):
         return
     
     bot.send_chat_action(message.chat.id, 'typing')
-    bot.send_message(message.chat.id, "🖼️ **Анализирую фото...**")
+    status_msg = bot.send_message(message.chat.id, "🖼️ **Анализирую фото...**")
     
+    # Получаем файл фото
     file_id = message.photo[-1].file_id
     file_info = bot.get_file(file_id)
     file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
     
+    # Анализируем
     analysis = analyze_image(file_url)
     
     if analysis:
         update_stats(user_id, 'analyze')
-        bot.send_message(message.chat.id, f"🖼️ **Анализ фото:**\n\n{analysis}")
+        bot.edit_message_text(
+            f"🖼️ **Анализ фото:**\n\n{analysis}",
+            status_msg.chat.id,
+            status_msg.message_id
+        )
+        
+        # Отправляем в группу поддержки
+        if SUPPORT_GROUP_ID:
+            user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+            bot.send_message(
+                SUPPORT_GROUP_ID,
+                f"🖼️ **Анализ фото от {user_info}**\n\n{analysis}"
+            )
     else:
-        bot.send_message(message.chat.id, "😕 Не удалось проанализировать фото.")
+        bot.edit_message_text(
+            "😕 Не удалось проанализировать фото.",
+            status_msg.chat.id,
+            status_msg.message_id
+        )
 
 # ==================== КОЛЛБЭКИ ====================
 @bot.callback_query_handler(func=lambda call: True)
@@ -838,6 +882,9 @@ def callback_handler(call):
         
         for admin_id in ADMIN_IDS:
             bot.send_message(admin_id, admin_text, reply_markup=markup)
+        
+        if SUPPORT_GROUP_ID:
+            bot.send_message(SUPPORT_GROUP_ID, admin_text, reply_markup=markup)
         
         bot.answer_callback_query(call.id, "✅ Сообщение отправлено администратору")
         bot.send_message(
@@ -1083,6 +1130,7 @@ def handle_message(message):
     user_id = message.from_user.id
     text = message.text
     
+    # Отправляем в группу поддержки
     if SUPPORT_GROUP_ID and not text.startswith('/') and user_id not in ADMIN_IDS:
         try:
             user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
@@ -1190,7 +1238,6 @@ def handle_message(message):
 
 🔥 **ОСНОВНОЕ:**
 Просто общайся со мной — я умный ИИ с памятью!
-Я помню историю диалога и обращаюсь по имени.
 
 🎨 **Создать фото:** генерация картинок (10💎)
 🖼️ **Анализ фото:** отправь фото, я опишу его (бесплатно)
@@ -1202,12 +1249,8 @@ def handle_message(message):
 • 🖱️ Кликер — собирай очки и кристаллы
 • 🎲 Рулетка — угадай число 1-10, выигрыш x2
 
-💰 **ДОНАТ:**
-Поддержи проект и получи кристаллы (1₽ = 1💎)
-
-🔗 **РЕФЕРАЛКА:**
-Приглашай друзей и получай 50💎 за каждого
-
+💰 **ДОНАТ:** 1₽ = 1💎
+🔗 **РЕФЕРАЛКА:** 50💎 за друга
 🔐 **Канал:** {CHANNEL_USERNAME}
 """
         bot.send_message(message.chat.id, help_text)
@@ -1238,11 +1281,13 @@ def process_voice_text(message):
     bot.send_chat_action(message.chat.id, 'record_voice')
     status_msg = bot.send_message(message.chat.id, "🎤 **Генерирую голос...**")
     
-    voice_url = text_to_speech(text, voice)
+    audio_path = text_to_speech(text, voice)
     
-    if voice_url:
+    if audio_path:
         update_stats(user_id, 'voice')
-        bot.send_voice(message.chat.id, voice_url)
+        with open(audio_path, 'rb') as audio:
+            bot.send_voice(message.chat.id, audio)
+        os.remove(audio_path)
         bot.delete_message(status_msg.chat.id, status_msg.message_id)
     else:
         bot.edit_message_text("😕 Не удалось создать голос. Попробуй другой текст.", status_msg.chat.id, status_msg.message_id)
@@ -1254,11 +1299,16 @@ def process_image(message):
     bot.send_chat_action(message.chat.id, 'upload_photo')
     status_msg = bot.send_message(message.chat.id, "🎨 **Генерирую фото...**")
     
-    image_url = generate_image(prompt)
+    result = generate_image(prompt)
     
-    if image_url:
+    if result:
         update_stats(user_id, 'image')
-        bot.send_photo(message.chat.id, image_url, caption=f"🎨 Промпт: {prompt}")
+        if isinstance(result, str) and result.startswith('http'):
+            bot.send_photo(message.chat.id, result, caption=f"🎨 Промпт: {prompt}")
+        else:
+            with open(result, 'rb') as photo:
+                bot.send_photo(message.chat.id, photo, caption=f"🎨 Промпт: {prompt}")
+            os.remove(result)
         bot.delete_message(status_msg.chat.id, status_msg.message_id)
     else:
         add_crystals(user_id, 10, "Возврат за неудачную генерацию")
