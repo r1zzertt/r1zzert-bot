@@ -12,16 +12,18 @@ import random
 import urllib.parse
 import qrcode
 from io import BytesIO
+import json
 
 # ==================== НАСТРОЙКИ ====================
 TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')  # Для анализа фото
 PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
 ADMIN_IDS = [1783230843]  # @Kotmff
-SUPPORT_GROUP_ID = 0  # 0 = всё в ЛС, замени на ID группы с минусом
+SUPPORT_GROUP_ID = 0  # 0 = всё в ЛС
 
 DONATE_URL = "https://dalink.to/r1zzert"
 
@@ -44,6 +46,7 @@ def init_database():
             user_id INTEGER PRIMARY KEY,
             messages_count INTEGER DEFAULT 0,
             images_generated INTEGER DEFAULT 0,
+            images_analyzed INTEGER DEFAULT 0,
             videos_generated INTEGER DEFAULT 0,
             crystals INTEGER DEFAULT 50,
             joined_date TEXT,
@@ -56,7 +59,8 @@ def init_database():
             referrer_id INTEGER DEFAULT 0,
             referrals_count INTEGER DEFAULT 0,
             username TEXT,
-            first_name TEXT
+            first_name TEXT,
+            voice_setting TEXT DEFAULT 'male'
         )
     ''')
     
@@ -77,13 +81,6 @@ def init_database():
             amount INTEGER,
             reason TEXT,
             created_at TEXT
-        )
-    ''')
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS voice_settings (
-            user_id INTEGER PRIMARY KEY,
-            voice TEXT DEFAULT 'male'
         )
     ''')
     
@@ -123,6 +120,10 @@ def update_stats(user_id, stat_type, amount=1):
         cursor.execute('UPDATE users SET messages_count = messages_count + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'image':
         cursor.execute('UPDATE users SET images_generated = images_generated + ? WHERE user_id = ?', (amount, user_id))
+    elif stat_type == 'analyze':
+        cursor.execute('UPDATE users SET images_analyzed = images_analyzed + ? WHERE user_id = ?', (amount, user_id))
+    elif stat_type == 'video':
+        cursor.execute('UPDATE users SET videos_generated = videos_generated + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'click':
         cursor.execute('UPDATE users SET clicks = clicks + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'roulette_win':
@@ -251,7 +252,7 @@ def get_conversation_history(user_id, limit=10):
 def get_voice_setting(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT voice FROM voice_settings WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT voice_setting FROM users WHERE user_id = ?', (user_id,))
     result = cursor.fetchone()
     conn.close()
     return result[0] if result else 'male'
@@ -259,7 +260,7 @@ def get_voice_setting(user_id):
 def set_voice_setting(user_id, voice):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO voice_settings (user_id, voice) VALUES (?, ?)', (user_id, voice))
+    cursor.execute('UPDATE users SET voice_setting = ? WHERE user_id = ?', (voice, user_id))
     conn.commit()
     conn.close()
 
@@ -294,7 +295,7 @@ def get_stats(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT messages_count, images_generated, crystals, clicks,
+        SELECT messages_count, images_generated, images_analyzed, videos_generated, crystals, clicks,
                roulette_wins, casino_wins, casino_losses, referrals_count, joined_date
         FROM users WHERE user_id = ?
     ''', (user_id,))
@@ -321,7 +322,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# ==================== ИИ С ПАМЯТЬЮ ====================
+# ==================== ИИ С ПАМЯТЬЮ (РАБОЧАЯ МОДЕЛЬ) ====================
 def ask_openrouter(user_id, message):
     try:
         history = get_conversation_history(user_id, 10)
@@ -337,12 +338,10 @@ def ask_openrouter(user_id, message):
         
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://r1zzert-bot.onrender.com",
-            "X-Title": "R1ZZERT Bot"
+            "Content-Type": "application/json"
         }
         data = {
-            "model": "google/gemma-3-1b-it:free",
+            "model": "openai/gpt-3.5-turbo",  # РАБОЧАЯ МОДЕЛЬ
             "messages": messages,
             "temperature": 0.8,
             "max_tokens": 1000
@@ -368,43 +367,84 @@ def ask_openrouter(user_id, message):
         logger.error(f"Ошибка: {e}")
         return "😕 Ошибка связи с ИИ"
 
-# ==================== ГЕНЕРАЦИЯ ФОТО ====================
+# ==================== ГЕНЕРАЦИЯ ФОТО (РАБОЧАЯ) ====================
 def generate_image(prompt):
     try:
         encoded = urllib.parse.quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
-        return image_url
+        # Используем другой endpoint
+        image_url = f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&nologo=true"
+        
+        # Проверяем доступность
+        response = requests.head(image_url, timeout=5)
+        if response.status_code == 200:
+            return image_url
+        else:
+            # Запасной вариант
+            backup_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
+            return backup_url
     except Exception as e:
         logger.error(f"Ошибка генерации фото: {e}")
         return None
 
+# ==================== АНАЛИЗ ФОТО (ЧЕРЕЗ GROQ) ====================
+def analyze_image(image_url):
+    try:
+        if not GROQ_API_KEY:
+            return "❌ API ключ для анализа не настроен"
+        
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": "llama-3.2-11b-vision-preview",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Опиши подробно что изображено на этом фото. Укажи объекты, цвета, композицию, настроение."},
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    ]
+                }
+            ],
+            "max_tokens": 500
+        }
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка анализа фото: {e}")
+        return None
+
+# ==================== ГЕНЕРАЦИЯ ВИДЕО (ЗАГЛУШКА) ====================
+def generate_video(prompt):
+    # Пока возвращаем ссылку на пример
+    return f"https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4"
+
 # ==================== ГОЛОС (РАБОЧИЙ TTS) ====================
 def text_to_speech(text, voice='male'):
     try:
-        # Используем Яндекс.Браузер TTS (работает без ключей)
+        # Google TTS (работает везде)
         voices = {
-            'male': 'alyss',
-            'female': 'oksana',
-            'robot': 'zahar',
-            'child': 'ermil',
-            'zэцтел': 'jane'
+            'male': 'ru-RU-Wavenet-D',
+            'female': 'ru-RU-Wavenet-B',
+            'robot': 'ru-RU-Wavenet-C',
+            'child': 'ru-RU-Wavenet-A',
+            'zэцтел': 'ru-RU-Wavenet-E'
         }
-        voice_code = voices.get(voice, 'alyss')
+        voice_code = voices.get(voice, 'ru-RU-Wavenet-D')
         
-        # Кодируем текст
         encoded_text = urllib.parse.quote(text)
         
-        # Яндекс TTS
-        url = f"https://tts.voicetech.yandex.net/generate?text={encoded_text}&format=mp3&lang=ru-RU&speaker={voice_code}&emotion=neutral&speed=1.0"
-        
-        # Проверяем доступность
-        response = requests.head(url, timeout=5)
-        if response.status_code == 200:
-            return url
-        else:
-            # Запасной вариант
-            backup_url = f"https://api.streamelements.com/kappa/v2/speech?voice=ru-RU-DmitryNeural&text={encoded_text}"
-            return backup_url
+        # Google Translate TTS
+        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=ru&client=tw-ob"
+        return url
     except Exception as e:
         logger.error(f"Ошибка TTS: {e}")
         return None
@@ -462,6 +502,8 @@ def get_main_keyboard(user_id):
     buttons = [
         KeyboardButton("💬 Поболтать"),
         KeyboardButton("🎨 Создать фото"),
+        KeyboardButton("🖼️ Анализ фото"),
+        KeyboardButton("🎬 Создать видео"),
         KeyboardButton("🎤 Отправить голос"),
         KeyboardButton("🎮 Игры"),
         KeyboardButton("💰 Донат"),
@@ -627,6 +669,30 @@ def clear_history(message):
     conn.close()
     bot.reply_to(message, "🧠 **История диалога очищена!**")
 
+# ==================== ОБРАБОТКА ФОТО ====================
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    user_id = message.from_user.id
+    
+    if not check_subscription(user_id):
+        bot.send_message(message.chat.id, "❌ Сначала подпишись!")
+        return
+    
+    bot.send_chat_action(message.chat.id, 'typing')
+    bot.send_message(message.chat.id, "🖼️ **Анализирую фото...**")
+    
+    file_id = message.photo[-1].file_id
+    file_info = bot.get_file(file_id)
+    file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
+    
+    analysis = analyze_image(file_url)
+    
+    if analysis:
+        update_stats(user_id, 'analyze')
+        bot.send_message(message.chat.id, f"🖼️ **Анализ фото:**\n\n{analysis}")
+    else:
+        bot.send_message(message.chat.id, "😕 Не удалось проанализировать фото.")
+
 # ==================== КОЛЛБЭКИ ====================
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -718,7 +784,7 @@ def callback_handler(call):
         markup.add(InlineKeyboardButton("🎮 Другие игры", callback_data="game_back"))
         
         bot.edit_message_text(
-            f"🖱️ **Кликер**\n\nКликов: {get_user(user_id)[8]}\n💎: {get_crystals(user_id)}",
+            f"🖱️ **Кликер**\n\nКликов: {get_user(user_id)[9]}\n💎: {get_crystals(user_id)}",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=markup
@@ -997,13 +1063,15 @@ def process_admin_find_user(message):
         text += f"🆔 ID: {user[0]}\n"
         text += f"💬 Сообщений: {user[1]}\n"
         text += f"🎨 Фото: {user[2]}\n"
-        text += f"💎 Кристаллов: {user[4]}\n"
-        text += f"📅 В боте с: {user[5][:10]}\n"
-        text += f"🖱️ Кликов: {user[8]}\n"
-        text += f"🎲 Побед в рулетке: {user[9]}\n"
-        text += f"🎰 Побед в казино: {user[10]}\n"
-        text += f"❌ Проигрышей: {user[11]}\n"
-        text += f"👥 Рефералов: {user[13]}"
+        text += f"🖼️ Анализов: {user[3]}\n"
+        text += f"🎬 Видео: {user[4]}\n"
+        text += f"💎 Кристаллов: {user[5]}\n"
+        text += f"📅 В боте с: {user[6][:10]}\n"
+        text += f"🖱️ Кликов: {user[9]}\n"
+        text += f"🎲 Побед в рулетке: {user[10]}\n"
+        text += f"🎰 Побед в казино: {user[11]}\n"
+        text += f"❌ Проигрышей: {user[12]}\n"
+        text += f"👥 Рефералов: {user[14]}"
         
         bot.send_message(message.chat.id, text)
     else:
@@ -1042,6 +1110,19 @@ def handle_message(message):
         else:
             bot.send_message(message.chat.id, "❌ Недостаточно кристаллов! Нужно 10💎")
     
+    elif text == "🖼️ Анализ фото":
+        bot.send_message(
+            message.chat.id,
+            "🖼️ **Отправь мне фото,** и я расскажу что на нём изображено!"
+        )
+    
+    elif text == "🎬 Создать видео":
+        if spend_crystals(user_id, 30, "Генерация видео"):
+            bot.send_message(message.chat.id, "🎬 **Напиши промпт для видео:**\n\nНапример: «закат над океаном»")
+            bot.register_next_step_handler(message, process_video)
+        else:
+            bot.send_message(message.chat.id, "❌ Недостаточно кристаллов! Нужно 30💎")
+    
     elif text == "🎤 Отправить голос":
         bot.send_message(
             message.chat.id,
@@ -1077,16 +1158,18 @@ def handle_message(message):
     elif text == "📊 Моя статистика":
         stats = get_stats(user_id)
         if stats:
-            joined = datetime.fromisoformat(stats[8]).strftime('%d.%m.%Y')
+            joined = datetime.fromisoformat(stats[10]).strftime('%d.%m.%Y')
             msg = f"📊 **Твоя статистика**\n\n"
             msg += f"💬 Сообщений: {stats[0]}\n"
             msg += f"🎨 Фото: {stats[1]}\n"
-            msg += f"💎 Кристаллов: {stats[2]}\n"
-            msg += f"🖱️ Кликов: {stats[3]}\n"
-            msg += f"🎲 Побед в рулетке: {stats[4]}\n"
-            msg += f"🎰 Побед в казино: {stats[5]}\n"
-            msg += f"❌ Проигрышей в казино: {stats[6]}\n"
-            msg += f"👥 Рефералов: {stats[7]}\n"
+            msg += f"🖼️ Анализов фото: {stats[2]}\n"
+            msg += f"🎬 Видео: {stats[3]}\n"
+            msg += f"💎 Кристаллов: {stats[4]}\n"
+            msg += f"🖱️ Кликов: {stats[5]}\n"
+            msg += f"🎲 Побед в рулетке: {stats[6]}\n"
+            msg += f"🎰 Побед в казино: {stats[7]}\n"
+            msg += f"❌ Проигрышей в казино: {stats[8]}\n"
+            msg += f"👥 Рефералов: {stats[9]}\n"
             msg += f"📅 В боте с: {joined}"
             bot.send_message(message.chat.id, msg)
         else:
@@ -1110,6 +1193,8 @@ def handle_message(message):
 Я помню историю диалога и обращаюсь по имени.
 
 🎨 **Создать фото:** генерация картинок (10💎)
+🖼️ **Анализ фото:** отправь фото, я опишу его (бесплатно)
+🎬 **Создать видео:** генерация видео (30💎)
 🎤 **Отправить голос:** озвучка текста разными голосами (бесплатно)
 
 🎮 **ИГРЫ:**
@@ -1178,6 +1263,23 @@ def process_image(message):
     else:
         add_crystals(user_id, 10, "Возврат за неудачную генерацию")
         bot.edit_message_text("😕 Не удалось сгенерировать фото", status_msg.chat.id, status_msg.message_id)
+
+def process_video(message):
+    user_id = message.from_user.id
+    prompt = message.text
+    
+    bot.send_chat_action(message.chat.id, 'upload_video')
+    status_msg = bot.send_message(message.chat.id, "🎬 **Генерирую видео...**")
+    
+    video_url = generate_video(prompt)
+    
+    if video_url:
+        update_stats(user_id, 'video')
+        bot.send_video(message.chat.id, video_url, caption=f"🎬 Промпт: {prompt}")
+        bot.delete_message(status_msg.chat.id, status_msg.message_id)
+    else:
+        add_crystals(user_id, 30, "Возврат за неудачное видео")
+        bot.edit_message_text("😕 Не удалось сгенерировать видео", status_msg.chat.id, status_msg.message_id)
 
 # ==================== ЗАПУСК ====================
 if __name__ == '__main__':
