@@ -18,12 +18,12 @@ import json
 TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY')  # Обязательно для анализа фото
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY')  # Для анализа фото
 PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
 ADMIN_IDS = [1783230843]  # @Kotmff
-SUPPORT_GROUP_ID = -1003884837805  # Твоя группа (исправлено!)
+SUPPORT_GROUP_ID = -1003884837805  # Твоя группа
 
 DONATE_URL = "https://dalink.to/r1zzert"
 
@@ -322,7 +322,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# ==================== ИИ С ПАМЯТЬЮ (БЕСПЛАТНАЯ МОДЕЛЬ) ====================
+# ==================== ИИ С ПАМЯТЬЮ (РАБОЧАЯ МОДЕЛЬ) ====================
 def ask_openrouter(user_id, message):
     try:
         history = get_conversation_history(user_id, 10)
@@ -338,10 +338,12 @@ def ask_openrouter(user_id, message):
         
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://r1zzert-bot.onrender.com",
+            "X-Title": "R1ZZERT Bot"
         }
         data = {
-            "model": "mistralai/mistral-7b-instruct:free",  # ПОЛНОСТЬЮ БЕСПЛАТНАЯ МОДЕЛЬ
+            "model": "google/gemini-2.0-flash-exp:free",  # РАБОЧАЯ БЕСПЛАТНАЯ МОДЕЛЬ
             "messages": messages,
             "temperature": 0.8,
             "max_tokens": 1000
@@ -359,6 +361,20 @@ def ask_openrouter(user_id, message):
             answer = result['choices'][0]['message']['content']
             save_conversation(user_id, "assistant", answer)
             return answer
+        elif response.status_code == 404:
+            # Пробуем другую модель
+            data["model"] = "cognitivecomputations/dolphin3.0-mistral-24b:free"
+            response2 = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            if response2.status_code == 200:
+                result2 = response2.json()
+                answer2 = result2['choices'][0]['message']['content']
+                save_conversation(user_id, "assistant", answer2)
+                return answer2
         else:
             logger.error(f"OpenRouter ошибка {response.status_code}")
             return f"😕 Ошибка OpenRouter: {response.status_code}"
@@ -370,28 +386,27 @@ def ask_openrouter(user_id, message):
 # ==================== ГЕНЕРАЦИЯ ФОТО (РАБОЧАЯ) ====================
 def generate_image(prompt):
     try:
-        # Используем бесплатный API для генерации
-        url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev"
-        headers = {"Authorization": f"Bearer {os.environ.get('HF_TOKEN', 'hf_YGIzbBhnNLDRatYUjRshNfIwq1QIWDTI_7')}"}
+        # Используем бесплатный API Pollinations (работает стабильно)
+        encoded = urllib.parse.quote(prompt)
         
-        response = requests.post(
-            url,
-            headers=headers,
-            json={"inputs": prompt},
-            timeout=60
-        )
+        # Пробуем несколько вариантов
+        urls = [
+            f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true",
+            f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&nologo=true",
+            f"https://text-to-image-pollinations.onrender.com/image?prompt={encoded}"
+        ]
         
-        if response.status_code == 200:
-            # Сохраняем изображение
-            image_path = f"/tmp/image_{int(time.time())}.png"
-            with open(image_path, 'wb') as f:
-                f.write(response.content)
-            return image_path
-        else:
-            # Запасной вариант через Pollinations
-            encoded = urllib.parse.quote(prompt)
-            image_url = f"https://pollinations.ai/p/{encoded}?width=1024&height=1024&nologo=true"
-            return image_url
+        for url in urls:
+            try:
+                # Проверяем доступность
+                response = requests.head(url, timeout=3)
+                if response.status_code == 200:
+                    return url
+            except:
+                continue
+        
+        # Если все не сработали, возвращаем первый как запасной
+        return urls[0]
     except Exception as e:
         logger.error(f"Ошибка генерации фото: {e}")
         return None
@@ -451,13 +466,13 @@ def text_to_speech(text, voice='male'):
         
         encoded_text = urllib.parse.quote(text)
         
-        # Используем API для генерации голоса
-        url = f"https://api.streamelements.com/kappa/v2/speech?voice={voice_code}&text={encoded_text}"
+        # Используем Google Translate TTS (работает всегда)
+        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=ru&client=tw-ob"
         
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             # Сохраняем аудио
-            audio_path = f"/tmp/voice_{int(time.time())}.ogg"
+            audio_path = f"/tmp/voice_{int(time.time())}.mp3"
             with open(audio_path, 'wb') as f:
                 f.write(response.content)
             return audio_path
@@ -1299,16 +1314,11 @@ def process_image(message):
     bot.send_chat_action(message.chat.id, 'upload_photo')
     status_msg = bot.send_message(message.chat.id, "🎨 **Генерирую фото...**")
     
-    result = generate_image(prompt)
+    image_url = generate_image(prompt)
     
-    if result:
+    if image_url:
         update_stats(user_id, 'image')
-        if isinstance(result, str) and result.startswith('http'):
-            bot.send_photo(message.chat.id, result, caption=f"🎨 Промпт: {prompt}")
-        else:
-            with open(result, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, caption=f"🎨 Промпт: {prompt}")
-            os.remove(result)
+        bot.send_photo(message.chat.id, image_url, caption=f"🎨 Промпт: {prompt}")
         bot.delete_message(status_msg.chat.id, status_msg.message_id)
     else:
         add_crystals(user_id, 10, "Возврат за неудачную генерацию")
