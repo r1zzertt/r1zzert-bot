@@ -17,15 +17,13 @@ from io import BytesIO
 TOKEN = os.environ.get('BOT_TOKEN')
 CHANNEL_USERNAME = os.environ.get('CHANNEL_USERNAME', '@r1zzert')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-HF_TOKEN = os.environ.get('HF_TOKEN')
-STABILITY_API_KEY = os.environ.get('STABILITY_API_KEY', '')
 PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
 ADMIN_IDS = [1783230843]  # @Kotmff
-SUPPORT_GROUP_ID = -1002424512894  # Группа поддержки (замени на свой ID)
+SUPPORT_GROUP_ID = 0  # 0 = всё в ЛС, замени на ID группы с минусом
 
-DONATE_URL = "https://dalink.to/r1zzert"  # Твоя ссылка для доната
+DONATE_URL = "https://dalink.to/r1zzert"
 
 if not TOKEN or not OPENROUTER_API_KEY:
     print("❌ Ошибка: не все переменные окружения заданы!")
@@ -41,7 +39,6 @@ def init_database():
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     
-    # Пользователи
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -49,9 +46,9 @@ def init_database():
             images_generated INTEGER DEFAULT 0,
             videos_generated INTEGER DEFAULT 0,
             crystals INTEGER DEFAULT 50,
-            joined_date TIMESTAMP,
-            last_active TIMESTAMP,
-            last_daily TIMESTAMP,
+            joined_date TEXT,
+            last_active TEXT,
+            last_daily TEXT,
             clicks INTEGER DEFAULT 0,
             roulette_wins INTEGER DEFAULT 0,
             casino_wins INTEGER DEFAULT 0,
@@ -63,29 +60,26 @@ def init_database():
         )
     ''')
     
-    # История диалогов (для памяти ИИ)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             role TEXT,
             content TEXT,
-            timestamp TIMESTAMP
+            timestamp TEXT
         )
     ''')
     
-    # Транзакции
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             amount INTEGER,
             reason TEXT,
-            created_at TIMESTAMP
+            created_at TEXT
         )
     ''')
     
-    # Настройки голоса
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS voice_settings (
             user_id INTEGER PRIMARY KEY,
@@ -106,10 +100,12 @@ def get_user(user_id):
     user = cursor.fetchone()
     
     if not user:
+        now = datetime.now().isoformat()
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
         cursor.execute('''
             INSERT INTO users (user_id, joined_date, last_active, last_daily)
             VALUES (?, ?, ?, ?)
-        ''', (user_id, datetime.now(), datetime.now(), datetime.now() - timedelta(days=1)))
+        ''', (user_id, now, now, yesterday))
         conn.commit()
         cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
         user = cursor.fetchone()
@@ -120,14 +116,13 @@ def get_user(user_id):
 def update_stats(user_id, stat_type, amount=1):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
-    cursor.execute('UPDATE users SET last_active = ? WHERE user_id = ?', (datetime.now(), user_id))
+    now = datetime.now().isoformat()
+    cursor.execute('UPDATE users SET last_active = ? WHERE user_id = ?', (now, user_id))
     
     if stat_type == 'message':
         cursor.execute('UPDATE users SET messages_count = messages_count + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'image':
         cursor.execute('UPDATE users SET images_generated = images_generated + ? WHERE user_id = ?', (amount, user_id))
-    elif stat_type == 'video':
-        cursor.execute('UPDATE users SET videos_generated = videos_generated + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'click':
         cursor.execute('UPDATE users SET clicks = clicks + ? WHERE user_id = ?', (amount, user_id))
     elif stat_type == 'roulette_win':
@@ -147,9 +142,8 @@ def add_crystals(user_id, amount, reason):
     cursor.execute('''
         INSERT INTO transactions (user_id, amount, reason, created_at)
         VALUES (?, ?, ?, ?)
-    ''', (user_id, amount, reason, datetime.now()))
+    ''', (user_id, amount, reason, datetime.now().isoformat()))
     
-    # Если есть реферер, начисляем ему бонус (10% от доната)
     cursor.execute('SELECT referrer_id FROM users WHERE user_id = ?', (user_id,))
     referrer = cursor.fetchone()
     if referrer and referrer[0] and amount > 0:
@@ -159,7 +153,7 @@ def add_crystals(user_id, amount, reason):
             cursor.execute('''
                 INSERT INTO transactions (user_id, amount, reason, created_at)
                 VALUES (?, ?, ?, ?)
-            ''', (referrer[0], bonus, f"Бонус за реферала {user_id}", datetime.now()))
+            ''', (referrer[0], bonus, f"Бонус за реферала {user_id}", datetime.now().isoformat()))
     
     conn.commit()
     conn.close()
@@ -175,7 +169,7 @@ def spend_crystals(user_id, amount, reason):
         cursor.execute('''
             INSERT INTO transactions (user_id, amount, reason, created_at)
             VALUES (?, ?, ?, ?)
-        ''', (user_id, -amount, reason, datetime.now()))
+        ''', (user_id, -amount, reason, datetime.now().isoformat()))
         conn.commit()
         conn.close()
         return True
@@ -199,16 +193,16 @@ def get_daily_bonus(user_id):
         conn.close()
         return False
     
-    last_daily = result[0]
-    last = datetime.fromisoformat(last_daily)
+    last_daily = datetime.fromisoformat(result[0])
     
-    if datetime.now().date() > last.date():
+    if datetime.now().date() > last_daily.date():
+        now = datetime.now().isoformat()
         cursor.execute('UPDATE users SET crystals = crystals + 20, last_daily = ? WHERE user_id = ?',
-                      (datetime.now(), user_id))
+                      (now, user_id))
         cursor.execute('''
             INSERT INTO transactions (user_id, amount, reason, created_at)
             VALUES (?, ?, ?, ?)
-        ''', (user_id, 20, "Ежедневный бонус", datetime.now()))
+        ''', (user_id, 20, "Ежедневный бонус", now))
         conn.commit()
         conn.close()
         return True
@@ -219,7 +213,6 @@ def save_conversation(user_id, role, content):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     
-    # Оставляем только последние 20 сообщений
     cursor.execute('''
         DELETE FROM conversations 
         WHERE id NOT IN (
@@ -233,7 +226,7 @@ def save_conversation(user_id, role, content):
     cursor.execute('''
         INSERT INTO conversations (user_id, role, content, timestamp)
         VALUES (?, ?, ?, ?)
-    ''', (user_id, role, content, datetime.now()))
+    ''', (user_id, role, content, datetime.now().isoformat()))
     
     conn.commit()
     conn.close()
@@ -301,7 +294,7 @@ def get_stats(user_id):
     conn = sqlite3.connect('bot_database.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT messages_count, images_generated, videos_generated, crystals, clicks,
+        SELECT messages_count, images_generated, crystals, clicks,
                roulette_wins, casino_wins, casino_losses, referrals_count, joined_date
         FROM users WHERE user_id = ?
     ''', (user_id,))
@@ -328,7 +321,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# ==================== ИИ С ПАМЯТЬЮ (OPENROUTER) ====================
+# ==================== ИИ С ПАМЯТЬЮ ====================
 def ask_openrouter(user_id, message):
     try:
         history = get_conversation_history(user_id, 10)
@@ -349,7 +342,7 @@ def ask_openrouter(user_id, message):
             "X-Title": "R1ZZERT Bot"
         }
         data = {
-            "model": "openai/gpt-4o-mini",  # Бесплатная модель
+            "model": "google/gemma-3-1b-it:free",
             "messages": messages,
             "temperature": 0.8,
             "max_tokens": 1000
@@ -369,85 +362,54 @@ def ask_openrouter(user_id, message):
             return answer
         else:
             logger.error(f"OpenRouter ошибка {response.status_code}")
-            return None
+            return f"😕 Ошибка OpenRouter: {response.status_code}"
             
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        return None
+        return "😕 Ошибка связи с ИИ"
 
 # ==================== ГЕНЕРАЦИЯ ФОТО ====================
 def generate_image(prompt):
     try:
-        # Сначала пробуем Stability AI
-        if STABILITY_API_KEY:
-            response = requests.post(
-                "https://api.stability.ai/v2beta/stable-image/generate/core",
-                headers={
-                    "authorization": f"Bearer {STABILITY_API_KEY}",
-                    "accept": "image/*"
-                },
-                files={"none": ''},
-                data={
-                    "prompt": prompt,
-                    "output_format": "png",
-                    "aspect_ratio": "1:1"
-                },
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                image_path = f"/tmp/image_{int(time.time())}.png"
-                with open(image_path, 'wb') as f:
-                    f.write(response.content)
-                return image_path
-        
-        # Запасной вариант через Pollinations
         encoded = urllib.parse.quote(prompt)
         image_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true"
         return image_url
-    except:
-        return None
-
-# ==================== ГЕНЕРАЦИЯ ВИДЕО ====================
-def generate_video(prompt):
-    try:
-        API_URL = "https://api-inference.huggingface.co/models/ali-vilab/text-to-video-ms-1.7b"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-        
-        response = requests.post(
-            API_URL,
-            headers=headers,
-            json={"inputs": prompt},
-            timeout=60
-        )
-        
-        if response.status_code == 200:
-            video_path = f"/tmp/video_{int(time.time())}.mp4"
-            with open(video_path, 'wb') as f:
-                f.write(response.content)
-            return video_path
-        return None
     except Exception as e:
-        logger.error(f"Ошибка видео: {e}")
+        logger.error(f"Ошибка генерации фото: {e}")
         return None
 
-# ==================== ГОЛОС (TTS) ====================
+# ==================== ГОЛОС (РАБОЧИЙ TTS) ====================
 def text_to_speech(text, voice='male'):
-    voices = {
-        'male': 'ru-RU-DmitryNeural',      # Мужской
-        'female': 'ru-RU-SvetlanaNeural',   # Женский
-        'robot': 'ru-RU-CatherineNeural',    # Роботизированный
-        'child': 'ru-RU-AnnaNeural',         # Детский
-        'zэцтел': 'ru-RU-MarinaNeural'       # Zэцтел стиль
-    }
-    voice_name = voices.get(voice, 'ru-RU-DmitryNeural')
     try:
-        url = f"https://api.streamelements.com/kappa/v2/speech?voice={voice_name}&text={urllib.parse.quote(text)}"
-        return url
-    except:
+        # Используем Яндекс.Браузер TTS (работает без ключей)
+        voices = {
+            'male': 'alyss',
+            'female': 'oksana',
+            'robot': 'zahar',
+            'child': 'ermil',
+            'zэцтел': 'jane'
+        }
+        voice_code = voices.get(voice, 'alyss')
+        
+        # Кодируем текст
+        encoded_text = urllib.parse.quote(text)
+        
+        # Яндекс TTS
+        url = f"https://tts.voicetech.yandex.net/generate?text={encoded_text}&format=mp3&lang=ru-RU&speaker={voice_code}&emotion=neutral&speed=1.0"
+        
+        # Проверяем доступность
+        response = requests.head(url, timeout=5)
+        if response.status_code == 200:
+            return url
+        else:
+            # Запасной вариант
+            backup_url = f"https://api.streamelements.com/kappa/v2/speech?voice=ru-RU-DmitryNeural&text={encoded_text}"
+            return backup_url
+    except Exception as e:
+        logger.error(f"Ошибка TTS: {e}")
         return None
 
-# ==================== QR-КОД ДЛЯ ДОНАТА ====================
+# ==================== QR-КОД ====================
 def generate_qr_code(url):
     try:
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
@@ -460,19 +422,50 @@ def generate_qr_code(url):
         img.save(bio, 'PNG')
         bio.seek(0)
         return bio
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка QR: {e}")
         return None
+
+# ==================== ЖИВЫЕ ПРИВЕТСТВИЯ ====================
+def get_welcome_message(user_name):
+    messages = [
+        f"👋 О, {user_name}! Новенький? Проходи, присаживайся. Я тут как раз чай заварил. Ну почти.",
+        f"🔥 {user_name}, йо! Давно тебя ждал. У меня для тебя кое-что есть.",
+        f"🎉 {user_name}, ты как раз вовремя! У меня сегодня хорошее настроение.",
+        f"✨ {user_name}, с возвращением! Скучал по тебе (только никому не говори).",
+        f"⚡️ {user_name}, лови кристаллы и погнали играть!",
+        f"💫 {user_name}, а я тебя помню! Ну как дела? Рассказывай."
+    ]
+    return random.choice(messages)
+
+def get_subscribe_message(user_name):
+    messages = [
+        f"👋 {user_name}, привет! Но есть нюанс — сначала подпишись на канал, а потом уже всё остальное.",
+        f"🔥 {user_name}, йо! Подписка на канал — и ты в игре.",
+        f"⚡️ {user_name}, без подписки никого не пускаю. Такие правила.",
+        f"🎯 {user_name}, жми кнопку подписки и становись своим."
+    ]
+    return random.choice(messages)
+
+def get_daily_bonus_message():
+    messages = [
+        "🎁 Держи свой ежедневный бонус! +20💎",
+        "💰 Ежедневка прилетела! +20 кристаллов на счёт.",
+        "⭐️ Ты сегодня молодец, лови 20💎",
+        "✨ За то, что ты есть — +20💎"
+    ]
+    return random.choice(messages)
 
 # ==================== КЛАВИАТУРЫ ====================
 def get_main_keyboard(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
-        KeyboardButton("🎨 Фото"),
-        KeyboardButton("🎬 Видео"),
-        KeyboardButton("🎤 Голос"),
+        KeyboardButton("💬 Поболтать"),
+        KeyboardButton("🎨 Создать фото"),
+        KeyboardButton("🎤 Отправить голос"),
         KeyboardButton("🎮 Игры"),
         KeyboardButton("💰 Донат"),
-        KeyboardButton("📊 Статистика"),
+        KeyboardButton("📊 Моя статистика"),
         KeyboardButton("🔗 Рефералка"),
         KeyboardButton("❓ Помощь")
     ]
@@ -570,14 +563,13 @@ def start_command(message):
     user_id = message.from_user.id
     user_name = message.from_user.first_name or "друг"
     
-    # Проверка реферала
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit():
         referrer_id = int(args[1])
         if referrer_id != user_id:
             set_referrer(user_id, referrer_id)
             add_crystals(referrer_id, 50, f"Реферал {user_id}")
-            add_crystals(user_id, 20, "Бонус за регистрацию по рефералке")
+            add_crystals(user_id, 20, "Бонус за регистрацию")
             bot.send_message(referrer_id, f"🎉 По твоей рефералке зарегистрировался {user_name}! +50💎")
     
     get_user(user_id)
@@ -588,20 +580,17 @@ def start_command(message):
         markup.add(InlineKeyboardButton("✅ Я ПОДПИСАЛСЯ", callback_data="check_sub"))
         bot.send_message(
             message.chat.id,
-            f"👋 Привет, {user_name}!\n\n🔒 Подпишись на {CHANNEL_USERNAME}",
+            get_subscribe_message(user_name),
             reply_markup=markup
         )
         return
     
-    # Ежедневный бонус
     if get_daily_bonus(user_id):
-        bot.send_message(message.chat.id, "🎁 **Ежедневный бонус:** +20💎")
+        bot.send_message(message.chat.id, get_daily_bonus_message())
     
     bot.send_message(
         message.chat.id,
-        f"👋 **С возвращением, {user_name}!**\n\n"
-        f"💎 Кристаллов: {get_crystals(user_id)}\n\n"
-        f"Я — твой умный ИИ помощник с памятью. Просто общайся со мной!",
+        f"{get_welcome_message(user_name)}\n\n💎 Кристаллов: {get_crystals(user_id)}",
         reply_markup=get_main_keyboard(user_id)
     )
 
@@ -612,7 +601,7 @@ def ref_command(message):
     bot.send_message(
         message.chat.id,
         f"🔗 **Твоя реферальная ссылка:**\n`{ref_link}`\n\n"
-        f"За каждого приглашенного друга ты получишь 50💎, а друг 20💎",
+        f"За каждого друга ты получишь 50💎, а друг 20💎",
         parse_mode="Markdown"
     )
 
@@ -642,7 +631,6 @@ def clear_history(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
-    global admin_donate_target
     
     if call.data == "check_sub":
         if check_subscription(user_id):
@@ -655,18 +643,17 @@ def callback_handler(call):
         else:
             bot.answer_callback_query(call.id, "❌ Не подписан!", show_alert=True)
     
-    # Голос
     elif call.data.startswith("voice_"):
         voice = call.data.replace("voice_", "")
         set_voice_setting(user_id, voice)
         bot.answer_callback_query(call.id, f"Голос изменён на {voice}")
         bot.edit_message_text(
-            f"✅ Голос установлен: {voice}",
+            f"✅ Голос установлен: {voice}\n\nТеперь отправь текст для озвучки.",
             call.message.chat.id,
             call.message.message_id
         )
+        bot.register_next_step_handler(call.message, process_voice_text)
     
-    # Игры
     elif call.data == "game_casino":
         bot.edit_message_text(
             "🎰 **Казино**\n\nВыбери ставку:",
@@ -776,19 +763,15 @@ def callback_handler(call):
             reply_markup=get_games_keyboard()
         )
     
-    # Донат
     elif call.data == "donate_done":
         user_info = f"@{call.from_user.username}" if call.from_user.username else f"ID: {user_id}"
-        admin_text = f"💰 **Донат от {user_info}**\nСумма: неизвестно (нажми кнопку чтобы ввести)\nСсылка: {DONATE_URL}"
+        admin_text = f"💰 **Донат от {user_info}**\nСумма: неизвестно\nСсылка: {DONATE_URL}"
         
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("💎 Начислить кристаллы", callback_data=f"donate_pay_{user_id}"))
         
         for admin_id in ADMIN_IDS:
             bot.send_message(admin_id, admin_text, reply_markup=markup)
-        
-        if SUPPORT_GROUP_ID:
-            bot.send_message(SUPPORT_GROUP_ID, admin_text, reply_markup=markup)
         
         bot.answer_callback_query(call.id, "✅ Сообщение отправлено администратору")
         bot.send_message(
@@ -804,7 +787,6 @@ def callback_handler(call):
         )
         bot.register_next_step_handler(msg, lambda m: process_donate_payment(m, target_id))
     
-    # Админские коллбэки
     elif call.data.startswith("admin_") and is_admin(user_id):
         if call.data == "admin_stats":
             total_users = get_total_users_count()
@@ -1015,7 +997,6 @@ def process_admin_find_user(message):
         text += f"🆔 ID: {user[0]}\n"
         text += f"💬 Сообщений: {user[1]}\n"
         text += f"🎨 Фото: {user[2]}\n"
-        text += f"🎬 Видео: {user[3]}\n"
         text += f"💎 Кристаллов: {user[4]}\n"
         text += f"📅 В боте с: {user[5][:10]}\n"
         text += f"🖱️ Кликов: {user[8]}\n"
@@ -1034,7 +1015,6 @@ def handle_message(message):
     user_id = message.from_user.id
     text = message.text
     
-    # Отправляем копию в группу поддержки (кроме админских команд)
     if SUPPORT_GROUP_ID and not text.startswith('/') and user_id not in ADMIN_IDS:
         try:
             user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
@@ -1049,31 +1029,25 @@ def handle_message(message):
         bot.send_message(message.chat.id, "❌ Сначала подпишись!")
         return
     
-    # Ежедневный бонус
     if get_daily_bonus(user_id):
-        bot.send_message(message.chat.id, "🎁 **Ежедневный бонус:** +20💎")
+        bot.send_message(message.chat.id, get_daily_bonus_message())
     
-    if text == "🎨 Фото":
+    if text == "💬 Поболтать":
+        bot.send_message(message.chat.id, "💬 Ну давай, я слушаю. О чём поговорим?")
+    
+    elif text == "🎨 Создать фото":
         if spend_crystals(user_id, 10, "Генерация фото"):
-            bot.send_message(message.chat.id, "✏️ **Напиши промпт для фото:**")
+            bot.send_message(message.chat.id, "✏️ **Напиши промпт для фото:**\n\nНапример: «киберпанк город ночью» или «милый котик с шапкой»")
             bot.register_next_step_handler(message, process_image)
         else:
             bot.send_message(message.chat.id, "❌ Недостаточно кристаллов! Нужно 10💎")
     
-    elif text == "🎬 Видео":
-        if spend_crystals(user_id, 20, "Генерация видео"):
-            bot.send_message(message.chat.id, "✏️ **Напиши промпт для видео:**")
-            bot.register_next_step_handler(message, process_video)
-        else:
-            bot.send_message(message.chat.id, "❌ Недостаточно кристаллов! Нужно 20💎")
-    
-    elif text == "🎤 Голос":
+    elif text == "🎤 Отправить голос":
         bot.send_message(
             message.chat.id,
             "🎤 **Выбери голос:**",
             reply_markup=get_voice_keyboard()
         )
-        bot.register_next_step_handler(message, process_voice_text)
     
     elif text == "🎮 Игры":
         bot.send_message(message.chat.id, "🎮 **Выбери игру:**", reply_markup=get_games_keyboard())
@@ -1100,20 +1074,19 @@ def handle_message(message):
                 reply_markup=get_donate_keyboard()
             )
     
-    elif text == "📊 Статистика":
+    elif text == "📊 Моя статистика":
         stats = get_stats(user_id)
         if stats:
-            joined = datetime.fromisoformat(stats[9]).strftime('%d.%m.%Y')
+            joined = datetime.fromisoformat(stats[8]).strftime('%d.%m.%Y')
             msg = f"📊 **Твоя статистика**\n\n"
             msg += f"💬 Сообщений: {stats[0]}\n"
             msg += f"🎨 Фото: {stats[1]}\n"
-            msg += f"🎬 Видео: {stats[2]}\n"
-            msg += f"💎 Кристаллов: {stats[3]}\n"
-            msg += f"🖱️ Кликов: {stats[4]}\n"
-            msg += f"🎲 Побед в рулетке: {stats[5]}\n"
-            msg += f"🎰 Побед в казино: {stats[6]}\n"
-            msg += f"❌ Проигрышей в казино: {stats[7]}\n"
-            msg += f"👥 Рефералов: {stats[8]}\n"
+            msg += f"💎 Кристаллов: {stats[2]}\n"
+            msg += f"🖱️ Кликов: {stats[3]}\n"
+            msg += f"🎲 Побед в рулетке: {stats[4]}\n"
+            msg += f"🎰 Побед в казино: {stats[5]}\n"
+            msg += f"❌ Проигрышей в казино: {stats[6]}\n"
+            msg += f"👥 Рефералов: {stats[7]}\n"
             msg += f"📅 В боте с: {joined}"
             bot.send_message(message.chat.id, msg)
         else:
@@ -1136,9 +1109,8 @@ def handle_message(message):
 Просто общайся со мной — я умный ИИ с памятью!
 Я помню историю диалога и обращаюсь по имени.
 
-🎨 **Фото:** генерация картинок (10💎)
-🎬 **Видео:** генерация видео (20💎)
-🎤 **Голос:** озвучка текста разными голосами (бесплатно)
+🎨 **Создать фото:** генерация картинок (10💎)
+🎤 **Отправить голос:** озвучка текста разными голосами (бесплатно)
 
 🎮 **ИГРЫ:**
 • 🎰 Казино — угадай число 1-6, выигрыш x3
@@ -1163,7 +1135,6 @@ def handle_message(message):
         )
     
     else:
-        # Обычный диалог с ИИ
         bot.send_chat_action(message.chat.id, 'typing')
         answer = ask_openrouter(user_id, text)
         
@@ -1189,7 +1160,7 @@ def process_voice_text(message):
         bot.send_voice(message.chat.id, voice_url)
         bot.delete_message(status_msg.chat.id, status_msg.message_id)
     else:
-        bot.edit_message_text("😕 Не удалось создать голос", status_msg.chat.id, status_msg.message_id)
+        bot.edit_message_text("😕 Не удалось создать голос. Попробуй другой текст.", status_msg.chat.id, status_msg.message_id)
 
 def process_image(message):
     user_id = message.from_user.id
@@ -1198,43 +1169,19 @@ def process_image(message):
     bot.send_chat_action(message.chat.id, 'upload_photo')
     status_msg = bot.send_message(message.chat.id, "🎨 **Генерирую фото...**")
     
-    result = generate_image(prompt)
+    image_url = generate_image(prompt)
     
-    if result:
+    if image_url:
         update_stats(user_id, 'image')
-        if isinstance(result, str) and result.startswith('http'):
-            bot.send_photo(message.chat.id, result, caption=f"🎨 Промпт: {prompt}")
-        else:
-            with open(result, 'rb') as photo:
-                bot.send_photo(message.chat.id, photo, caption=f"🎨 Промпт: {prompt}")
-            os.remove(result)
+        bot.send_photo(message.chat.id, image_url, caption=f"🎨 Промпт: {prompt}")
         bot.delete_message(status_msg.chat.id, status_msg.message_id)
     else:
         add_crystals(user_id, 10, "Возврат за неудачную генерацию")
         bot.edit_message_text("😕 Не удалось сгенерировать фото", status_msg.chat.id, status_msg.message_id)
 
-def process_video(message):
-    user_id = message.from_user.id
-    prompt = message.text
-    
-    bot.send_chat_action(message.chat.id, 'upload_video')
-    status_msg = bot.send_message(message.chat.id, "🎬 **Генерирую видео...** Это займёт 1-2 минуты.")
-    
-    video_path = generate_video(prompt)
-    
-    if video_path:
-        update_stats(user_id, 'video')
-        with open(video_path, 'rb') as video:
-            bot.send_video(message.chat.id, video, caption=f"🎬 Промпт: {prompt}")
-        os.remove(video_path)
-        bot.delete_message(status_msg.chat.id, status_msg.message_id)
-    else:
-        add_crystals(user_id, 20, "Возврат за неудачное видео")
-        bot.edit_message_text("😕 Не удалось сгенерировать видео", status_msg.chat.id, status_msg.message_id)
-
 # ==================== ЗАПУСК ====================
 if __name__ == '__main__':
-    logger.info("🚀 Запуск MEGA AI с памятью...")
+    logger.info("🚀 Запуск MEGA AI...")
     bot.remove_webhook()
     time.sleep(1)
     bot.set_webhook(url=f"https://r1zzert-bot.onrender.com/webhook")
