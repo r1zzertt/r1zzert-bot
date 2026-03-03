@@ -23,7 +23,7 @@ PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
 ADMIN_IDS = [1783230843]  # @Kotmff
-SUPPORT_GROUP_ID = -1002424512894  # Группа поддержки
+SUPPORT_GROUP_ID = -1002424512894  # Группа поддержки (замени на свой ID)
 
 DONATE_URL = "https://dalink.to/r1zzert"  # Твоя ссылка для доната
 
@@ -642,6 +642,7 @@ def clear_history(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
+    global admin_donate_target
     
     if call.data == "check_sub":
         if check_subscription(user_id):
@@ -777,7 +778,7 @@ def callback_handler(call):
     
     # Донат
     elif call.data == "donate_done":
-        user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+        user_info = f"@{call.from_user.username}" if call.from_user.username else f"ID: {user_id}"
         admin_text = f"💰 **Донат от {user_info}**\nСумма: неизвестно (нажми кнопку чтобы ввести)\nСсылка: {DONATE_URL}"
         
         markup = InlineKeyboardMarkup()
