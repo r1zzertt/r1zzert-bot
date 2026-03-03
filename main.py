@@ -23,7 +23,7 @@ PORT = int(os.environ.get('PORT', 10000))
 
 # 👑 ТВОЙ ID (АДМИН)
 ADMIN_IDS = [1783230843]  # @Kotmff
-SUPPORT_GROUP_ID = 0  # 0 = всё в ЛС
+SUPPORT_GROUP_ID = -1003884837805  # 0 = всё в ЛС
 
 DONATE_URL = "https://dalink.to/r1zzert"
 
