@@ -10,7 +10,7 @@ import time
 import logging
 
 # ==================== НАСТРОЙКИ ====================
-TOKEN = os.environ.get('8752774430:AAGkYTK_xIZIGsmFdu0RMu094eNDpE-TYrg')  # Сюда вставишь токен бота
+TOKEN = os.environ.get('BOT_TOKEN')  # Сюда вставишь токен бота
 PORT = int(os.environ.get('PORT', 10000))
 
 logging.basicConfig(level=logging.INFO)
