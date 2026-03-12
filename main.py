@@ -1,6 +1,6 @@
 import os
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import random
 import string
 import sqlite3
@@ -62,93 +62,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-# ==================== ПРИВЕТСТВИЯ ====================
-WELCOME_MESSAGES = [
-    "🔐 **Добро пожаловать в игру!**\n\nПривет, {name}! Готов взломать замок?",
-    "🎯 **Взлом замка**\n\nО, {name}! Новый игрок? Сейчас научим!",
-    "🔑 **Привет, {name}!**\n\nЗагадывай цифры, взламывай коды, побеждай!",
-    "⚡️ **{name} в игре!**\n\nСыграем? Создай игру или присоединяйся!"
-]
-
-CREATOR_WAIT_MESSAGES = [
-    "🔐 **Комната создана!**\n\nКод: `{code}`\nСложность: {diff} цифр\n\n🔑 Отправь этот код другу\n⏳ Ожидаем второго игрока...\n\n📝 **Загадай свой секретный код:**\nНапиши {diff} цифр",
-    "🎯 **Игра создана!**\n\nКод комнаты: `{code}`\nСложность: {diff}\n\n👥 Пригласи друга\n\n🤫 **Загадай код:** {diff} цифр"
-]
-
-JOIN_SUCCESS_MESSAGES = [
-    "✅ **Ты присоединился!**\n\nКомната: `{code}`\nСложность: {diff} цифр\n\n🤫 **Загадай свой секретный код:**\nНапиши {diff} цифр",
-    "🔑 **Подключение успешно!**\n\nКод: `{code}`\nСложность: {diff}\n\n🎯 **Твоя очередь загадывать:**\nНапиши {diff} цифр"
-]
-
-GAME_START_MESSAGES = {
-    'creator': [
-        "🎮 **ИГРА НАЧАЛАСЬ!**\n\nТы ходишь ПЕРВЫМ!\nПопробуй взломать код соперника",
-        "⚡️ **ТВОЙ ХОД!**\n\nСоперник загадал код. Угадай его!"
-    ],
-    'joiner': [
-        "🎮 **ИГРА НАЧАЛАСЬ!**\n\nСейчас ходит СОЗДАТЕЛЬ\nЖди своей очереди",
-        "⏳ **Ожидаем хода соперника**\n\nКак только он сходит - я сообщу"
-    ]
-}
-
-YOUR_TURN_MESSAGES = [
-    "🎯 **ТВОЙ ХОД!**\n\nВведи {diff} цифр, чтобы взломать код соперника",
-    "⚡️ **УГАДЫВАЙ!**\n\nПопытка #{move_num}\nВведи {diff} цифр"
-]
-
-OPPONENT_TURN_MESSAGES = [
-    "⏳ **ХОД СОПЕРНИКА**\n\nСейчас {name} пытается взломать твой код...",
-    "🤔 **Соперник думает...**\n\nКак только сделает ход - я покажу результат"
-]
-
-MOVE_RESULT_MESSAGES = [
-    "🎯 **Результат хода**\n\n{name}: `{guess}`\n✅ Совпадений: {matches} из {total}",
-    "📊 **Попытка #{move_num}**\n\n{name}: `{guess}`\n🎯 Угадано цифр: {matches}/{total}"
-]
-
-WIN_MESSAGES = {
-    'winner': [
-        "🏆 **ПОБЕДА!** 🏆\n\nТы взломал код!\nВсе {total} цифр угаданы!\n\nПоздравляю, чемпион!",
-        "🎉 **ТЫ ВЫИГРАЛ!** 🎉\n\nКод соперника раскрыт!\nОтличная работа!"
-    ],
-    'loser': [
-        "💔 **ПОРАЖЕНИЕ**\n\nСоперник угадал твой код\nКод был: `{code}`\n\nВ следующий раз повезет!",
-        "😢 **Ты проиграл**\n\nТвой секретный код `{code}` раскрыт\nСыграй еще!"
-    ]
-}
-
-SURRENDER_MESSAGES = {
-    'surrendered': [
-        "🏳️ **Ты сдался**\n\nИгра завершена. Победа присуждена сопернику",
-        "⚔️ **Капитуляция**\n\nСоперник победил по твоему решению"
-    ],
-    'winner': [
-        "🏆 **ПОБЕДА!**\n\nСоперник сдался!\nТы выиграл не прилагая усилий",
-        "🎉 **Техническая победа!**\n\nПротивник признал свое поражение"
-    ]
-}
-
-STATS_MESSAGES = {
-    'has_stats': [
-        "📊 **Твоя статистика**\n\n"
-        "🎮 Всего игр: {games}\n"
-        "🏆 Побед: {wins}\n"
-        "💔 Поражений: {losses}\n"
-        "📈 Процент побед: {winrate}%\n\n"
-        "🔐 Играй еще!",
-        
-        "📈 **Личная статистика**\n\n"
-        "⚔️ Сыграно матчей: {games}\n"
-        "🥇 Побед: {wins}\n"
-        "🥈 Поражений: {losses}\n"
-        "📊 Винрейт: {winrate}%"
-    ],
-    'no_stats': [
-        "📊 **Ты еще не играл**\n\nСоздай игру или присоединись к другу!",
-        "🎯 **Нулевая статистика**\n\nПора начинать играть!"
-    ]
-}
 
 # ==================== ФУНКЦИИ ====================
 
@@ -224,9 +137,9 @@ def set_code(room_code, player_id, secret):
         return False, "❌ Комната не найдена"
     
     # Проверка длины
-    if len(secret) != room[4]:
+    if len(secret) != room[5]:
         conn.close()
-        return False, f"❌ Нужно {room[4]} цифр, а ты ввел {len(secret)}"
+        return False, f"❌ Нужно {room[5]} цифр, а ты ввел {len(secret)}"
     
     if not secret.isdigit():
         conn.close()
@@ -251,7 +164,7 @@ def set_code(room_code, player_id, secret):
                      WHERE code = ?''', (room[1], room_code))
         conn.commit()
         conn.close()
-        return True, "start", room[1], room[2], room[3], room[4]
+        return True, "start", room[1], room[2], room[3], room[5]
     
     conn.commit()
     conn.close()
@@ -278,14 +191,14 @@ def make_move(room_code, player_id, player_name, guess):
         return False, "❌ Игра не найдена"
     
     # Проверка очереди
-    if player_id != room[7]:
+    if player_id != room[9]:
         conn.close()
         return False, "⏳ Сейчас не твой ход!"
     
     # Проверка длины
-    if len(guess) != room[4]:
+    if len(guess) != room[5]:
         conn.close()
-        return False, f"❌ Нужно {room[4]} цифр"
+        return False, f"❌ Нужно {room[5]} цифр"
     
     if not guess.isdigit():
         conn.close()
@@ -293,17 +206,17 @@ def make_move(room_code, player_id, player_name, guess):
     
     # Определяем код соперника
     if player_id == room[1]:  # создатель
-        secret = room[6]  # код присоединившегося
+        secret = room[7]  # код присоединившегося
         opponent_id = room[2]
         opponent_name = room[3]
     else:  # присоединившийся
-        secret = room[5]  # код создателя
+        secret = room[6]  # код создателя
         opponent_id = room[1]
-        opponent_name = room[1]  # имя создателя получим отдельно
+        opponent_name = room[1]
     
     # Получаем имя оппонента если нужно
     if opponent_id == room[1]:
-        opponent_name = room[1]  # имя создателя
+        opponent_name = room[1]
     else:
         opponent_name = room[3]
     
@@ -321,7 +234,7 @@ def make_move(room_code, player_id, player_name, guess):
               (room_code, player_id, player_name, guess, matches, datetime.now().isoformat()))
     
     # Проверка победы
-    if matches == room[4]:
+    if matches == room[5]:
         c.execute('''UPDATE rooms SET status = "finished", winner_id = ?
                      WHERE code = ?''', (player_id, room_code))
         
@@ -355,7 +268,7 @@ def get_game_info(room_code, user_id):
     
     # Получаем последние ходы
     c.execute('''SELECT player_id, player_name, guess, matches FROM moves 
-                 WHERE room_code = ? ORDER BY created_at DESC LIMIT 10''', (room_code,))
+                 WHERE room_code = ? ORDER BY created_at DESC LIMIT 5''', (room_code,))
     moves = c.fetchall()
     
     # Считаем общее количество ходов
@@ -377,7 +290,7 @@ def get_game_info(room_code, user_id):
         'total_moves': total_moves,
         'is_creator': is_creator,
         'is_joiner': is_joiner,
-        'creator_name': room[1],  # имя создателя
+        'creator_name': room[1],
         'joiner_name': room[3] if room[3] else 'Ожидание...'
     }
 
@@ -398,8 +311,8 @@ def main_menu():
     markup.add(
         InlineKeyboardButton("🎮 СОЗДАТЬ ИГРУ", callback_data="menu_create"),
         InlineKeyboardButton("🔑 ПРИСОЕДИНИТЬСЯ", callback_data="menu_join"),
-        InlineKeyboardButton("📊 МОЯ СТАТИСТИКА", callback_data="menu_stats"),
-        InlineKeyboardButton("❓ КАК ИГРАТЬ", callback_data="menu_help")
+        InlineKeyboardButton("📊 СТАТИСТИКА", callback_data="menu_stats"),
+        InlineKeyboardButton("❓ ПРАВИЛА", callback_data="menu_help")
     )
     return markup
 
@@ -407,10 +320,10 @@ def difficulty_menu():
     """Выбор сложности"""
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("4 🔢 цифры", callback_data="diff_4"),
-        InlineKeyboardButton("6 🔢 цифр", callback_data="diff_6"),
-        InlineKeyboardButton("8 🔢 цифр", callback_data="diff_8"),
-        InlineKeyboardButton("12 🔢 цифр", callback_data="diff_12"),
+        InlineKeyboardButton("4 цифры", callback_data="diff_4"),
+        InlineKeyboardButton("6 цифр", callback_data="diff_6"),
+        InlineKeyboardButton("8 цифр", callback_data="diff_8"),
+        InlineKeyboardButton("12 цифр", callback_data="diff_12"),
         InlineKeyboardButton("◀️ НАЗАД", callback_data="back_main")
     )
     return markup
@@ -422,11 +335,10 @@ def game_menu(room_code, is_your_turn=False, game_status='playing'):
     if game_status == 'playing':
         if is_your_turn:
             markup.add(InlineKeyboardButton("🎯 СДЕЛАТЬ ХОД", callback_data=f"move_{room_code}"))
-        markup.add(InlineKeyboardButton("🔄 ОБНОВИТЬ СТАТУС", callback_data=f"refresh_{room_code}"))
+        markup.add(InlineKeyboardButton("🔄 ОБНОВИТЬ", callback_data=f"refresh_{room_code}"))
         markup.add(InlineKeyboardButton("🏳️ СДАТЬСЯ", callback_data=f"surrender_{room_code}"))
     else:
-        markup.add(InlineKeyboardButton("🎮 В ГЛАВНОЕ МЕНЮ", callback_data="back_main"))
-        markup.add(InlineKeyboardButton("🔄 НОВАЯ ИГРА", callback_data="menu_create"))
+        markup.add(InlineKeyboardButton("🎮 В МЕНЮ", callback_data="back_main"))
     
     return markup
 
@@ -446,11 +358,9 @@ def start_cmd(message):
     conn.commit()
     conn.close()
     
-    welcome = random.choice(WELCOME_MESSAGES).format(name=name)
-    
     bot.send_message(
         message.chat.id,
-        welcome,
+        f"🔑 Привет, {name}!\n\nЗагадывай цифры, взламывай коды, побеждай!",
         reply_markup=main_menu()
     )
 
@@ -458,27 +368,6 @@ def start_cmd(message):
 def play_cmd(message):
     """Быстрый старт"""
     start_cmd(message)
-
-@bot.message_handler(commands=['stats'])
-def stats_cmd(message):
-    """Статистика"""
-    user_id = message.from_user.id
-    stats = get_stats(user_id)
-    
-    if stats and stats[0] > 0:
-        games, wins, losses, name = stats
-        winrate = round((wins / games) * 100, 1)
-        text = random.choice(STATS_MESSAGES['has_stats']).format(
-            name=name,
-            games=games,
-            wins=wins,
-            losses=losses,
-            winrate=winrate
-        )
-    else:
-        text = random.choice(STATS_MESSAGES['no_stats'])
-    
-    bot.send_message(message.chat.id, text, reply_markup=main_menu())
 
 # ==================== КОЛЛБЭКИ ====================
 
@@ -490,8 +379,7 @@ def callback_handler(call):
     # ===== ГЛАВНОЕ МЕНЮ =====
     if call.data == "menu_create":
         bot.edit_message_text(
-            "🎮 **СОЗДАНИЕ НОВОЙ ИГРЫ**\n\n"
-            "Выбери количество цифр в коде:",
+            "🎮 Создание игры\n\nВыбери сколько цифр будет в коде:",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=difficulty_menu()
@@ -499,10 +387,10 @@ def callback_handler(call):
     
     elif call.data == "menu_join":
         bot.edit_message_text(
-            "🔑 **ПРИСОЕДИНЕНИЕ К ИГРЕ**\n\n"
+            "🔑 Присоединение к игре\n\n"
             "Введи код комнаты из 4 букв:\n"
-            "📝 Например: `ABCD` или `GAME`\n\n"
-            "_Код тебе должен сказать друг_",
+            "Например: ABCD или GAME\n\n"
+            "(код тебе должен сказать друг)",
             call.message.chat.id,
             call.message.message_id
         )
@@ -514,14 +402,13 @@ def callback_handler(call):
         if stats and stats[0] > 0:
             games, wins, losses, name = stats
             winrate = round((wins / games) * 100, 1)
-            text = random.choice(STATS_MESSAGES['has_stats']).format(
-                games=games,
-                wins=wins,
-                losses=losses,
-                winrate=winrate
-            )
+            text = f"📊 Твоя статистика\n\n"
+            text += f"Всего игр: {games}\n"
+            text += f"Побед: {wins}\n"
+            text += f"Поражений: {losses}\n"
+            text += f"Процент побед: {winrate}%"
         else:
-            text = random.choice(STATS_MESSAGES['no_stats'])
+            text = "📊 Ты еще не играл\n\nСоздай игру или присоединись к другу!"
         
         bot.edit_message_text(
             text,
@@ -532,25 +419,19 @@ def callback_handler(call):
     
     elif call.data == "menu_help":
         text = """
-🔐 **ВЗЛОМ ЗАМКА — ПРАВИЛА ИГРЫ**
+🔐 ВЗЛОМ ЗАМКА - Правила игры
 
-🎯 **Суть игры:**
-Каждый игрок загадывает свой секретный код из цифр. Нужно первым угадать код соперника.
+Как играть:
+1. Каждый загадывает свой секретный код из цифр
+2. Ходите по очереди, пытаясь угадать код соперника
+3. После каждой догадки бот показывает сколько цифр совпало по позициям
 
-📝 **Как играть:**
-1️⃣ Создай игру или присоединись по коду
-2️⃣ Загадай свой секретный код
-3️⃣ Ходите по очереди, пытаясь угадать код соперника
-4️⃣ После каждой догадки бот показывает сколько цифр совпало ПО ПОЗИЦИЯМ
+Пример:
+Загадано: 3 7 8 1
+Догадка:  9 7 1 3
+Результат: 1 совпадение (цифра 7 на второй позиции)
 
-✅ **Пример:**
-Загадано: `3 7 8 1`
-Догадка:  `9 7 1 3`
-Результат: **1 совпадение** (цифра 7 на второй позиции)
-
-🏆 **Победа:** угадал все цифры первым
-
-⚡️ **Совет:** Запоминай результаты ходов, чтобы вычислить код!
+Победа: угадал все цифры первым
         """
         bot.edit_message_text(
             text,
@@ -561,7 +442,7 @@ def callback_handler(call):
     
     elif call.data == "back_main":
         bot.edit_message_text(
-            random.choice(WELCOME_MESSAGES).format(name=name),
+            f"🔑 Привет, {name}!\n\nЗагадывай цифры, взламывай коды, побеждай!",
             call.message.chat.id,
             call.message.message_id,
             reply_markup=main_menu()
@@ -572,10 +453,13 @@ def callback_handler(call):
         difficulty = int(call.data.split('_')[1])
         room_code = create_room(user_id, name, difficulty)
         
-        text = random.choice(CREATOR_WAIT_MESSAGES).format(
-            code=room_code,
-            diff=difficulty
-        )
+        text = f"🔐 Комната создана!\n\n"
+        text += f"Код: {room_code}\n"
+        text += f"Сложность: {difficulty} цифр\n\n"
+        text += f"Отправь этот код другу.\n"
+        text += f"⏳ Ожидаем второго игрока...\n\n"
+        text += f"Загадай свой секретный код:\n"
+        text += f"Напиши {difficulty} цифр"
         
         bot.edit_message_text(
             text,
@@ -595,17 +479,14 @@ def callback_handler(call):
             return
         
         # Проверка очереди
-        if info['room'][7] != user_id:
+        if info['room'][9] != user_id:
             bot.answer_callback_query(call.id, "⏳ Сейчас не твой ход!", show_alert=True)
             return
         
         move_num = info['total_moves'] + 1
-        diff = info['room'][4]
+        diff = info['room'][5]
         
-        text = random.choice(YOUR_TURN_MESSAGES).format(
-            diff=diff,
-            move_num=move_num
-        )
+        text = f"🎯 Твой ход\n\nПопытка №{move_num}\nВведи {diff} цифр:"
         
         bot.edit_message_text(
             text,
@@ -642,18 +523,16 @@ def callback_handler(call):
             conn.commit()
             
             # Уведомления
-            surr_text = random.choice(SURRENDER_MESSAGES['surrendered'])
             bot.edit_message_text(
-                surr_text,
+                "🏳️ Ты сдался\n\nВозвращайся в меню:",
                 call.message.chat.id,
                 call.message.message_id,
                 reply_markup=main_menu()
             )
             
-            win_text = random.choice(SURRENDER_MESSAGES['winner'])
             bot.send_message(
                 winner,
-                win_text,
+                "🏆 Соперник сдался! Ты победил!",
                 reply_markup=main_menu()
             )
         
@@ -674,7 +553,7 @@ def process_join(message):
             bot.send_message(message.chat.id, f"{result}")
             bot.send_message(
                 message.chat.id,
-                "🔐 Возвращаемся в меню:",
+                "🔑 Возвращаемся в меню:",
                 reply_markup=main_menu()
             )
             del temp_data[user_id]
@@ -687,14 +566,13 @@ def process_join(message):
         diff = c.fetchone()[0]
         conn.close()
         
-        text = random.choice(JOIN_SUCCESS_MESSAGES).format(
-            code=code,
-            diff=diff
-        )
-        
         bot.send_message(
             message.chat.id,
-            text
+            f"✅ Ты присоединился!\n\n"
+            f"Комната: {code}\n"
+            f"Сложность: {diff} цифр\n\n"
+            f"Загадай свой секретный код:\n"
+            f"Напиши {diff} цифр"
         )
         temp_data[user_id] = {'action': 'set_code', 'room': code}
 
@@ -709,7 +587,7 @@ def handle_text(message):
     if user_id not in temp_data:
         bot.send_message(
             message.chat.id,
-            "🔐 Используй меню для навигации:",
+            "🔑 Используй кнопки меню:",
             reply_markup=main_menu()
         )
         return
@@ -727,19 +605,14 @@ def handle_text(message):
         
         if result == "start":
             # Игра начинается
-            creator_msg = random.choice(GAME_START_MESSAGES['creator'])
-            joiner_msg = random.choice(GAME_START_MESSAGES['joiner'])
-            
-            # Уведомляем создателя
             bot.send_message(
                 creator,
-                f"✅ Код принят!\n\n{creator_msg}"
+                f"✅ Код принят!\n\n🎮 Игра началась!\nТы ходишь первым!"
             )
             
-            # Уведомляем присоединившегося
             bot.send_message(
                 joiner,
-                f"✅ Код принят!\n\n{joiner_msg}"
+                f"✅ Код принят!\n\n🎮 Игра началась!\nСейчас ходит {creator_name}"
             )
             
             # Показываем статус
@@ -751,7 +624,7 @@ def handle_text(message):
         else:
             bot.send_message(
                 message.chat.id,
-                "✅ **Код сохранен!**\n\n⏳ Ожидаем, пока соперник загадает свой код..."
+                "✅ Код сохранен!\n\n⏳ Ожидаем соперника..."
             )
             del temp_data[user_id]
     
@@ -772,38 +645,30 @@ def handle_text(message):
         conn.close()
         
         # Сообщение о результате хода
-        result_text = random.choice(MOVE_RESULT_MESSAGES).format(
-            name=name,
-            guess=text,
-            matches=matches,
-            total=total,
-            move_num=move_num
-        )
+        result_text = f"🎯 Ход #{move_num}\n\n"
+        result_text += f"{name}: {text}\n"
+        result_text += f"✅ Совпадений: {matches} из {total}"
         
         bot.send_message(message.chat.id, result_text)
         bot.send_message(opponent_id, result_text)
         
         if status == "win":
             # Победа
-            winner_msg = random.choice(WIN_MESSAGES['winner']).format(total=total)
-            loser_msg = random.choice(WIN_MESSAGES['loser']).format(code=secret)
-            
             bot.send_message(
                 user_id,
-                winner_msg,
+                f"🏆 ПОБЕДА!\n\nТы угадал код!\nВсе {total} цифр совпали!",
                 reply_markup=main_menu()
             )
             bot.send_message(
                 opponent_id,
-                loser_msg,
+                f"💔 Поражение\n\nСоперник угадал твой код\nКод был: {secret}",
                 reply_markup=main_menu()
             )
         else:
             # Ход продолжается
-            turn_msg = random.choice(OPPONENT_TURN_MESSAGES).format(name=name)
             bot.send_message(
                 opponent_id,
-                turn_msg
+                f"⏳ Твой ход! Соперник ({name}) сделал догадку"
             )
             
             # Показываем обновленный статус
@@ -829,7 +694,7 @@ def show_game_status(chat_id, message_id, room_code, user_id):
         opponent_name = room[3] if room[3] else "Соперник"
     else:
         opponent_id = room[1]
-        opponent_name = room[1]  # имя создателя
+        opponent_name = room[1]
     
     # Если имя соперника не получено, берем из статистики
     if opponent_name == room[1] or not opponent_name:
@@ -840,44 +705,37 @@ def show_game_status(chat_id, message_id, room_code, user_id):
         opponent_name = name_data[0] if name_data else "Соперник"
         conn.close()
     
-    status_emoji = {
-        'waiting': '⏳',
-        'setting': '🔐',
-        'playing': '⚔️',
-        'finished': '🏁'
-    }.get(room[8], '🎮')
-    
-    text = f"{status_emoji} **ИГРА**\n"
-    text += f"┌ Комната: `{room_code}`\n"
-    text += f"├ Сложность: {room[4]} цифр\n"
-    text += f"├ Соперник: {opponent_name}\n"
-    text += f"├ Ходов сделано: {total_moves}\n"
+    text = f"🎮 ИГРА\n"
+    text += f"Комната: {room_code}\n"
+    text += f"Сложность: {room[5]} цифр\n"
+    text += f"Соперник: {opponent_name}\n"
+    text += f"Ходов: {total_moves}\n"
     
     if room[8] == 'playing':
-        if room[7] == user_id:
-            text += f"└ ⚡️ **ТВОЙ ХОД!**\n\n"
-        else:
-            text += f"└ ⏳ **ХОД СОПЕРНИКА**\n\n"
-    elif room[8] == 'finished':
         if room[9] == user_id:
-            text += f"└ 🏆 **ТЫ ПОБЕДИЛ**\n\n"
+            text += f"⚡️ ТВОЙ ХОД!\n\n"
         else:
-            text += f"└ 💔 **ТЫ ПРОИГРАЛ**\n\n"
+            text += f"⏳ ХОД СОПЕРНИКА\n\n"
+    elif room[8] == 'finished':
+        if room[10] == user_id:
+            text += f"🏆 ТЫ ПОБЕДИЛ\n\n"
+        else:
+            text += f"💔 ТЫ ПРОИГРАЛ\n\n"
     else:
-        text += f"└ {status_emoji} Ожидание...\n\n"
+        text += f"⏳ Ожидание...\n\n"
     
     if moves:
-        text += "**📊 История ходов:**\n"
-        for player_id, player_name, guess, matches in moves[:5]:  # показываем последние 5
+        text += "История ходов:\n"
+        for player_id, player_name, guess, matches in moves:
             if player_id == user_id:
-                prefix = "🟢 Ты:"
+                prefix = "Ты:"
             else:
-                prefix = f"🔴 {opponent_name}:"
-            text += f"{prefix} `{guess}` → {matches} совп.\n"
+                prefix = f"{opponent_name}:"
+            text += f"{prefix} {guess} → {matches} совп.\n"
     else:
-        text += "_Пока нет ходов_\n"
+        text += "Пока нет ходов\n"
     
-    is_your_turn = (room[8] == 'playing' and room[7] == user_id)
+    is_your_turn = (room[8] == 'playing' and room[9] == user_id)
     
     if message_id:
         bot.edit_message_text(
